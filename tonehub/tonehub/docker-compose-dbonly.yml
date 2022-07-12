@@ -1,0 +1,20 @@
+version: '3'
+
+services:
+  postgres:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_USER: tonehub
+      POSTGRES_PASSWORD: tonehub
+      POSTGRES_DB: tonehub
+      PGDATA: /pg-data
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./var/docker/postgres/pg-data:/pg-data
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 4321:8080

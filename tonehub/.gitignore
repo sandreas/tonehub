@@ -1,0 +1,8 @@
+/.idea
+/packages/
+/var/
+/*.DotSettings.user
+/.env
+/*/obj/
+/*/bin/
+/*/var/
