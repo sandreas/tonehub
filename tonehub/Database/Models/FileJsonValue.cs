@@ -1,12 +1,13 @@
 using System.ComponentModel.DataAnnotations;
 using JsonApiDotNetCore.Resources.Annotations;
+using Newtonsoft.Json.Linq;
 
 namespace tonehub.Database.Models;
 
-public class FileTag : ModelBase
+public class FileJsonValue : ModelBase
 {
-    [StringLength(255)][Attr] public string Namespace { get; set; } = "default";
+    [StringLength(255)] [Attr] public string Namespace { get; set; } = "default";
     [Attr] public uint Type { get; set; } = 0;
-    [HasOne] public Tag Tag { get; set; }
+    [Attr] public JToken Value { get; set; } = new JObject();
     [HasOne] public File File { get; set; }
-}    
+}

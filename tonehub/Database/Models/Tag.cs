@@ -1,4 +1,6 @@
-namespace tonehub.Controllers;
+using JsonApiDotNetCore.Resources.Annotations;
+
+namespace tonehub.Database.Models;
 
 public class Tag : ModelBase
 {
