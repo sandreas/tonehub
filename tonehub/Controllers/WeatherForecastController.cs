@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using tonehub.Database;
+using tonehub.Services;
 
 namespace tonehub.Controllers;
 
@@ -12,12 +15,15 @@ public class WeatherForecastController : ControllerBase
     };
 
     private readonly ILogger<WeatherForecastController> _logger;
+    private readonly AppDbContext _db;
+    private readonly DatabaseSettingsService _settings;
 
-    public WeatherForecastController(ILogger<WeatherForecastController> logger)
+    public WeatherForecastController(DatabaseSettingsService settings, ILogger<WeatherForecastController> logger)
     {
         _logger = logger;
+        _settings = settings;
     }
-
+/*
     [HttpGet(Name = "GetWeatherForecast")]
     public IEnumerable<WeatherForecast> Get()
     {
@@ -29,4 +35,12 @@ public class WeatherForecastController : ControllerBase
             })
             .ToArray();
     }
+    */
+    [HttpGet(Name = "GetWeatherForecast")]
+    public ActionResult<string> Get()
+    {
+        var value = _settings.Get<string>("testing");
+        return Ok(value);
+    }
+    
 }

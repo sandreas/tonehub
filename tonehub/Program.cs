@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using tonehub.Database;
 using tonehub.Options;
+using tonehub.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<ToneHubOptions>(builder.Configuration.GetSection("ToneHub"));
@@ -13,11 +14,15 @@ builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
     }
 );
 // Add services to the container.
+builder.Services.AddSingleton<DatabaseSettingsService>();
+
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+
 
 var app = builder.Build();
 var contextFactory = app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>();
