@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Standart.Hash.xxHash;
+using tonehub.StreamUtils;
 
 namespace tonehub.Metadata;
 
@@ -24,40 +25,28 @@ public abstract class HashBuilderBase : IHashBuilder
     
     protected byte[] BuildPartialHash(System.IO.Abstractions.IFileInfo file, long centerBytesToRead)
     {
-        using var stream = file.OpenRead();
-        return BuildPartialHash(stream, centerBytesToRead);
-    }
-    protected  byte[] BuildPartialHash(Stream input, long centerBytesToRead)
-    {
+        using var input = file.OpenRead();
         var offset = input.Length / 2 - centerBytesToRead / 2;
-        using var memoryStream = new MemoryStream();
-        CopyStream(input, memoryStream, offset, centerBytesToRead);
-        return HashFunction(memoryStream);
+        return BuildPartialHash(input, offset, centerBytesToRead);
     }
     
-    protected byte[] BuildPartialHash(Stream input, long offset , long length)
-    {
-        using var memoryStream = new MemoryStream();
-        CopyStream(input, memoryStream, offset, length);
-        return HashFunction(memoryStream);
+    protected  byte[] BuildPartialHash(Stream input, long centerWindowSize)   {
+        var offset = input.Length / 2 - centerWindowSize / 2;
+        return BuildPartialHash(input, offset, centerWindowSize);
     }
+
     
-    protected static void CopyStream(Stream input, Stream output, long offset=0, long limit=long.MaxValue)
+    protected  byte[] BuildPartialHash(Stream input, long offset, long length)
     {
-        byte[] buffer = new byte[32768];
-        input.Position = Math.Min(Math.Max(offset, 0), input.Length);
-        limit = Math.Min(limit, input.Length - input.Position);
-        var bufferLen = buffer.Length;
-        int read;
-        while (limit > 0 &&
-               (read = input.Read(buffer, 0, bufferLen)) > 0)
+        var pos = input.Position;
+        try
         {
-            output.Write(buffer, 0, read);
-            limit -= read;
-            if(limit < bufferLen)
-            {
-                bufferLen = (int)limit;
-            }
+            var limited = new StreamLimiter(input, offset, length);
+            return HashFunction(limited);
+        }
+        finally
+        {
+            input.Position = pos;
         }
     }
 

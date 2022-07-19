@@ -12,6 +12,20 @@ public class DatabaseSettingsService
         _db = db.CreateDbContext();
     }
     
+    public bool TryGet<T>(string key, out T? value)
+    {
+        value = default;
+        try
+        {
+            value = Get<T>(key);
+            return true;
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+    }
+    
     public T? Get<T>(string key)
     {
         var setting = _db.Settings.FirstOrDefault(s => s.Key == key);
