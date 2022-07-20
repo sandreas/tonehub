@@ -46,7 +46,13 @@ public class AudioFileTagLoader : IFileTagLoader
         var stringConvertibleProperties = MetadataExtensions.MetadataProperties.Where(p => !JsonProperties.Contains(p));
         foreach (var p in stringConvertibleProperties)
         {
-            var stringValue = track.GetMetadataPropertyValue(p)?.ToString();
+            var value = track.GetMetadataPropertyValue(p);
+            
+            if(MetadataExtensions.IsEmpty(value))            {
+                continue;
+            }
+            
+            var stringValue = value?.ToString();
             if (string.IsNullOrEmpty(stringValue))
             {
                 continue;

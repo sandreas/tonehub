@@ -30,6 +30,8 @@ public class AppDbContext : DbContext
     {
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<FileJsonValue, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<Setting, JToken>(vsi => vsi.Value));
+        modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<FileAction, JToken>(vsi => vsi.Context));
+        modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<SmartFileList, JToken>(vsi => vsi.Query));
         base.OnModelCreating(modelBuilder);
     }
         

@@ -9,6 +9,7 @@ using tonehub.HostedServices;
 using tonehub.Metadata;
 using tonehub.Options;
 using tonehub.Services;
+using tonehub.Settings;
 
 var builder = WebApplication.CreateBuilder(args);
 // https://docs.microsoft.com/de-de/aspnet/core/fundamentals/configuration/?view=aspnetcore-6.0
@@ -29,6 +30,10 @@ builder.Services.AddSingleton<FileSystem>();
 builder.Services.AddSingleton<FileWalker>();
 builder.Services.AddSingleton<AudioFileTagLoader>();
 builder.Services.AddSingleton<AudioHashBuilder>();
+builder.Services.AddSingleton(s => new FileIndexerSettings
+{
+    DeleteOrphansAfter = TimeSpan.FromSeconds(86400)
+});
 builder.Services.AddSingleton<FileIndexerService>();
 builder.Services.AddSingleton(_ => new FileExtensionContentTypeProvider
 {
@@ -39,10 +44,7 @@ builder.Services.AddSingleton(_ => new FileExtensionContentTypeProvider
 });
 
 
-
 builder.Services.AddJsonApi<AppDbContext>();
-
-
 
 
 builder.Services.AddControllers();
@@ -55,7 +57,8 @@ builder.Services.AddHostedService<BackgroundFileIndexerService>();
 
 var app = builder.Build();
 var contextFactory = app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>();
-await using(var db = await contextFactory.CreateDbContextAsync()){
+await using (var db = await contextFactory.CreateDbContextAsync())
+{
     db.Database.Migrate();
 }
 

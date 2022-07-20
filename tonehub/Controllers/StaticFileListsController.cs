@@ -5,9 +5,9 @@ using tonehub.Database.Models;
 
 namespace tonehub.Controllers;
 
-public class StaticFileListsController: JsonApiQueryController<Setting, Guid>
+public class StaticFileListsController: JsonApiQueryController<StaticFileList, Guid>
 {
-    public StaticFileListsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceService<Setting, Guid> resourceService,
+    public StaticFileListsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceService<StaticFileList, Guid> resourceService,
         ILoggerFactory loggerFactory)
         : base(options, resourceGraph, loggerFactory, resourceService)
     {
