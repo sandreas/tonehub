@@ -9,26 +9,25 @@ namespace tonehub.Database.Models;
 [Index(nameof(Location), IsUnique = true)]
 public class File : ModelBase
 {
-    [Attr] public GlobalFilterType ContentType { get; set; } = GlobalFilterType.Unspecified;
+    [Attr] public GlobalFilterType GlobalFilterType { get; set; } = GlobalFilterType.Unspecified;
 
     [StringLength(50)][Attr] public string MimeMediaType { get; set; } = "";
     [StringLength(50)][Attr] public string MimeSubType { get; set; } = "";
     
-    
-    [Attr] public ulong BytesCount { get; set; } = 0; // todo: rename to length / size?
-    [StringLength(250)][Attr] public string PartialHash { get; set; } = ""; // todo: remove, always hash fully
-    [StringLength(250)][Attr] public string FullHash { get; set; } = "";
-    
+    [StringLength(250)][Attr] public string Hash { get; set; } = "";
 
     [StringLength(4096)][Attr] public string Location { get; set; } = "";
     [Attr] public long Size { get; set; }
-    
+    [Attr] public DateTimeOffset ModifiedDate { get; set; }
     [Attr] public DateTimeOffset LastCheckDate { get; set; }
+
 
     
     [HasMany] public virtual ICollection<FileTag> FileTags { get; set; } = new List<FileTag>();
     [HasMany] public virtual ICollection<FileJsonValue> FileJsonValues { get; set; } = new List<FileJsonValue>();
         
-    [NotMapped] public bool IsDirty { get; set; }
+    [NotMapped] public bool IsNew { get; set; }
+    [NotMapped] private bool _hasChanged;
+    [NotMapped] public bool HasChanged { get => _hasChanged || IsNew; set => _hasChanged = value; }
 }
 

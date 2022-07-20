@@ -1,8 +1,6 @@
 using System.IO.Abstractions;
 using Newtonsoft.Json.Linq;
 using Sandreas.AudioMetadata;
-using tonehub.Database.Models;
-using File = System.IO.File;
 
 namespace tonehub.Metadata;
 
@@ -10,9 +8,11 @@ public class AudioFileTagLoader : IFileTagLoader
 {
     public static readonly MetadataProperty[] JsonProperties =
     {
+        MetadataProperty.Lyrics,
         MetadataProperty.Chapters,
         MetadataProperty.EmbeddedPictures,
         MetadataProperty.Chapters,
+        MetadataProperty.AdditionalFields
     };
 
     public string Namespace => "audio";
@@ -37,7 +37,7 @@ public class AudioFileTagLoader : IFileTagLoader
     }
 
 
-    public IEnumerable<(uint type, string value)> LoadTags(System.IO.Abstractions.IFileInfo path)
+    public IEnumerable<(string Namespace, uint Type, string Value)> LoadTags(IFileInfo path)
     {
         var track = new MetadataTrack(path);
 
@@ -52,23 +52,25 @@ public class AudioFileTagLoader : IFileTagLoader
                 continue;
             }
 
-            yield return ((uint)p, stringValue);
+            yield return (Namespace, (uint)p, stringValue);
         }
         // todo: add tag for picture count?
         // if(track.EmbeddedPictures.Count > 0)
     }
 
-    public IEnumerable<(uint type, JToken value)> LoadJsonValues(System.IO.Abstractions.IFileInfo path)
+    public IEnumerable<(string Namespace, uint Type, JToken Value)> LoadJsonValues(IFileInfo path)
     {
         var track = new MetadataTrack(path);
-        if (track.AdditionalFields.Count > 0)
+        var unmappedAdditionalFields =track.AdditionalFields.Where(kvp => !track.MappedAdditionalFields.ContainsKey(kvp.Key)).ToDictionary(kvp=>kvp.Key, kvp => kvp.Value);
+        if (unmappedAdditionalFields.Count > 0)
         {
-            yield return ((uint)MetadataProperty.AdditionalFields, JObject.FromObject(track.AdditionalFields));
+            yield return (Namespace, (uint)MetadataProperty.AdditionalFields, JObject.FromObject(unmappedAdditionalFields));
         }
 
         if (track.Chapters.Count > 0)
         {
-            yield return ((uint)MetadataProperty.Chapters, JArray.FromObject(track.Chapters.Select(c =>
+            // todo: find better represenation of chapters and lyrics
+            yield return (Namespace,(uint)MetadataProperty.Chapters, JArray.FromObject(track.Chapters.Select(c =>
                     JObject.FromObject(new
                     {
                         start = c.StartTime,

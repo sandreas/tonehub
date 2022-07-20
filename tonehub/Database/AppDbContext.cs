@@ -36,7 +36,7 @@ public class AppDbContext : DbContext
         
     public override int SaveChanges()
     {
-        var now = DateTime.UtcNow;
+        var now = DateTimeOffset.UtcNow;
 
         foreach (var changedEntity in ChangeTracker.Entries())
         {

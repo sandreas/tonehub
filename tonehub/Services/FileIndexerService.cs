@@ -1,5 +1,4 @@
 using System.IO.Abstractions;
-using System.Text;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Sandreas.Files;
@@ -7,7 +6,6 @@ using tonehub.Database;
 using tonehub.Database.Models;
 using tonehub.Metadata;
 using tonehub.Mime;
-using tonehub.StreamUtils;
 using FileModel = tonehub.Database.Models.File;
 
 namespace tonehub.Services;
@@ -18,8 +16,8 @@ public class FileIndexerService
     private readonly IFileTagLoader _tagLoader;
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     
-    private bool _indexingInProgress;
-    private DateTime _lastSuccessfulRun;
+    private DateTimeOffset? _indexingInProgressSince;
+    private DateTimeOffset? _lastSuccessfulRun;
     private readonly AudioHashBuilder _hashBuilder;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
 
@@ -35,22 +33,22 @@ public class FileIndexerService
     public void Run(string mediaPath) {
         try
         {
-            if(_indexingInProgress)
+            if(_indexingInProgressSince != null)
             {
                 return;
             }
-            _indexingInProgress = true;
+            _indexingInProgressSince = DateTimeOffset.UtcNow;
+            
             var files = _fileWalker.WalkRecursive(mediaPath).SelectFileInfo().Where(_tagLoader.Supports).ToArray();
             using var db = _dbFactory.CreateDbContext();
             UpdateFileTags(db, files, mediaPath);
             DeleteOrphanedFileTags(db, files);
-            _lastSuccessfulRun = DateTime.Now;
-        } catch(Exception e)        {
-            _indexingInProgress = false;
+            
+            _lastSuccessfulRun = DateTimeOffset.UtcNow;
         }
         finally
         {
-            _indexingInProgress = false;
+            _indexingInProgressSince = null;
         }
 
     }
@@ -63,45 +61,48 @@ public class FileIndexerService
             var existingFile = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
             if(existingFile == null)
             {
-                HandleMissingFile(db, file, normalizedLocation);
+                existingFile = HandleMissingFile(db, file, normalizedLocation);
             } else {
-                HandleExistingFile(db, file, normalizedLocation, existingFile);
+                HandleExistingFile(file, normalizedLocation, existingFile);
+            }
+            
+            if(existingFile.IsNew)
+            {
+                db.Files.Add(existingFile);
+            } else {
+                db.Files.Update(existingFile);
+            }
+            
+            if(existingFile.HasChanged)    {
+                UpdateFileRecordTagsAndJsonValues(db, existingFile, file);
             }
         }
     }
 
-    private void HandleExistingFile(AppDbContext db, IFileInfo file, string normalizedLocation, FileModel existingFileModel)
+    private void HandleExistingFile(IFileInfo file, string normalizedLocation, FileModel existingFileModel)
     {
-        if(existingFileModel.UpdatedDate < file.LastWriteTime){
-            UpdateFileRecord(db, file, normalizedLocation, existingFileModel);
+
+        // file must always be marked as changed because of orphan detection
+        existingFileModel.HasChanged = true;
+        if(existingFileModel.ModifiedDate < file.LastWriteTime)
+        {
+            // if file has been modified, hash has to be recalculated, GlobalFilterType reset
+            // because file could have been replaced
+            existingFileModel.GlobalFilterType = _tagLoader.LoadGlobalFilterType(file);
+            UpdateFileRecord(existingFileModel, file, normalizedLocation, "");
+        } else
+        {
+            existingFileModel.LastCheckDate = DateTimeOffset.UtcNow;
         }
     }
 
-    private void HandleMissingFile(AppDbContext db, IFileInfo file, string normalizedLocation)
+    private FileModel HandleMissingFile(AppDbContext db, IFileInfo file, string normalizedLocation)
     {
-        /*
-   at tonehub.StreamUtils.StreamLimiter.SetLength(Int64 value) in /home/mediacenter/projects/tonehub/tonehub/StreamUtils/StreamLimiter.cs:line 46
-   at tonehub.Metadata.HashBuilderBase.BuildPartialHash(Stream input, Int64 offset, Int64 length) in /home/mediacenter/projects/tonehub/tonehub/Metadata/HashBuilderBase.cs:line 51
-   at tonehub.Metadata.HashBuilderBase.BuildPartialHash(Stream input, Int64 centerWindowSize) in /home/mediacenter/projects/tonehub/tonehub/Metadata/HashBuilderBase.cs:line 34
-   at tonehub.Metadata.AudioHashBuilder.BuildPartialHash(IFileInfo file) in /home/mediacenter/projects/tonehub/tonehub/Metadata/AudioHashBuilder.cs:line 18
-   at tonehub.Services.FileIndexerService.HandleMissingFile(AppDbContext db, IFileInfo file, String normalizedLocation) in /home/mediacenter/projects/tonehub/tonehub/Services/FileIndexerService.cs:line 85 */
         try
         {
-            
-            /*
-
-            */
-            
-            var partialHash = BuildPartialHash(file);
-            var fileModel = db.Files.FirstOrDefault(f => f.PartialHash == partialHash);
-            // todo: append hash parameters to CreateNewFileRecord and UpdateFileRecord to prevent recalculation
-            if(fileModel == null)
-            {
-                CreateNewFileRecord(db, file, normalizedLocation, partialHash);
-            } else
-            {
-                UpdateFileRecord(db, file, normalizedLocation, fileModel);
-            }
+            var hash = BuildFullHashAsHexString(file);
+            var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash);
+            return existingRecord == null ? CreateNewFileRecord(file, normalizedLocation, hash) : UpdateFileRecord(existingRecord, file, normalizedLocation, existingRecord.Hash);
         }
         catch (Exception e)
         {
@@ -111,48 +112,99 @@ public class FileIndexerService
 
     }
 
-    private string BuildPartialHash(IFileInfo file)
+    private void UpdateFileRecordTagsAndJsonValues(AppDbContext db, FileModel fileRecord, IFileInfo file)
     {
-        return Convert.ToHexString(_hashBuilder.BuildPartialHash(file));
+        fileRecord.FileTags = fileRecord.FileTags.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
+
+        var loadedRawTags = _tagLoader.LoadTags(file);
+        
+        var tagsToStore = loadedRawTags.Select(t => new FileTag()
+        {
+            Namespace = t.Namespace,
+            Type = t.Type,
+            File = fileRecord,
+            Tag = FindOrCreateTag(db, t.Value)
+        });
+        foreach (var t in tagsToStore)
+        {
+            fileRecord.FileTags.Add(t);
+        }
+        
+        fileRecord.FileJsonValues = fileRecord.FileJsonValues.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
+
+        var loadedRawJsonValues = _tagLoader.LoadJsonValues(file);
+        
+        var jsonValuesToStore = loadedRawJsonValues.Select(t => new FileJsonValue()
+        {
+            Namespace = t.Namespace,
+            Type = t.Type,
+            File = fileRecord,
+            Value = t.Value
+        });
+        foreach (var t in jsonValuesToStore)
+        {
+            fileRecord.FileJsonValues.Add(t);
+        }
+
+        db.SaveChanges();
     }
     
-    private string BuildFullHash(IFileInfo file)
+    
+    private static Tag FindOrCreateTag(AppDbContext db, string tagValue)
+    {
+        // _logger.Information("Adding tag {TagValue}", tagValue.ToString());
+
+        var existing = db.Tags.FirstOrDefault(t =>
+            tagValue.Equals(t.Value)
+        );
+        if (existing != null)
+        {
+            // _logger.Information("Already exists");
+            return existing;
+        }
+
+        var newTag = new Tag()
+        {
+            Value = tagValue
+        };
+        db.Tags.Add(newTag);
+        db.SaveChanges();
+        return newTag;
+    }
+
+    private string BuildFullHashAsHexString(IFileInfo file)
     {
         return Convert.ToHexString(_hashBuilder.BuildFullHash(file));
     }
     
-    private void CreateNewFileRecord(AppDbContext db, IFileInfo file, string normalizedLocation, string partialHash)
+    private FileModel CreateNewFileRecord(IFileInfo file, string normalizedLocation, string hash)
     {
-        var newFileRecord = new FileModel {IsDirty = true};
-        FillRecordBasics(newFileRecord, file, normalizedLocation, partialHash);
+        var newFileRecord = new FileModel {
+            IsNew = true,
+            GlobalFilterType = _tagLoader.LoadGlobalFilterType(file)
+        };
+        return UpdateFileRecord(newFileRecord, file, normalizedLocation, hash);
     }
 
-    private void FillRecordBasics(FileModel newFileRecord, IFileInfo file, string normalizedLocation, string? partialHash=null, string? fullHash=null)
+    private FileModel UpdateFileRecord(FileModel fileRecord, IFileInfo file, string normalizedLocation, string hash)
     {
-        if(!TryLoadFileMimeType(file.FullName, out var mimeType))
-        {
-            throw new Exception("Could not fill record basics: MimeType fail");
+        if(fileRecord.MimeMediaType == "" || fileRecord.MimeSubType == ""){
+            if(!TryLoadFileMimeType(file.FullName, out var mimeType))
+            {
+                throw new Exception("Could not fill record basics: MimeType fail");
+            }
+            fileRecord.MimeMediaType = mimeType.MediaType;
+            fileRecord.MimeSubType = mimeType.SubType;
         }
-
-        newFileRecord.MimeMediaType = mimeType.MediaType;
-        newFileRecord.MimeSubType = mimeType.SubType;
-        newFileRecord.LastCheckDate = DateTimeOffset.Now;
-        newFileRecord.Size = file.Length;
-        newFileRecord.Location = normalizedLocation;
-        newFileRecord.PartialHash = partialHash ?? BuildPartialHash(file);
-        newFileRecord.FullHash = fullHash ?? BuildFullHash(file);
-    }
-
-    private void UpdateFileRecord(AppDbContext db, IFileInfo file, string normalizedLocation, FileModel fileModel)
-    {
-        fileModel.LastCheckDate = DateTimeOffset.Now;
-        fileModel.Location = normalizedLocation;
         
-        throw new NotImplementedException();
-
-        
+        fileRecord.Hash = hash == "" ? BuildFullHashAsHexString(file) : hash;
+        fileRecord.Location = normalizedLocation;
+        fileRecord.Size = file.Length;
+        fileRecord.ModifiedDate = file.LastWriteTime;
+        fileRecord.LastCheckDate = DateTimeOffset.UtcNow;
+        return fileRecord;
     }
-
+    
     private static string NormalizeLocationFromPath(string mediaPath, IFileSystemInfo file)
     {
         var relPath = file.FullName.StartsWith(mediaPath)
@@ -163,6 +215,47 @@ public class FileIndexerService
     
     private void DeleteOrphanedFileTags(AppDbContext db, IFileInfo[] files)
     {
+        // todo: Disable files first, dependant on setting: deleteOrphansAfterSeconds
+        // var deleteFiles = db.Files.Where(f => f.UpdatedDate <= _indexingInProgressSince).ToList();
+        var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < _indexingInProgressSince).ToList();
+        foreach(var fileRecord in deleteFiles){
+            db.FileTags.RemoveRange(fileRecord.FileTags);
+            db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
+        }
+        db.RemoveRange(deleteFiles);
+        db.SaveChanges();
+        
+        var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
+        db.Tags.RemoveRange(orphanTags);
+        db.SaveChanges();
+        /*
+        var param = new NpgsqlParameter("@LastIndexerRun", LastIndexerRun);
+            
+        
+        var sql = "DELETE FROM FileTag WHERE FileId IN (SELECT Id FROM Files WHERE UpdateDate < @LastIndexerRun)";
+        _ = db.Database.ExecuteSqlRaw(sql, param);
+        
+        sql = "DELETE FROM Files WHERE UpdateDate < @LastIndexerRun";
+        var removedItemCount = db.Database.ExecuteSqlRaw(sql, param);
+*/
+
+        // _logger.Information("found {DirtyRecordCount} to remove from database", removedItemCount);
+        //db.RemoveRange(toRemove);
+        //db.SaveChanges();
+        /*
+        var toRemove = db.Files.Where(f => f.UpdatedDate < _indexingInProgressSince);
+        foreach(var fileRecord in toRemove)        {
+            db.FileTags.RemoveRange(fileRecord.FileTags);
+            db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
+        }
+        // _logger.Information("found {DirtyRecordCount} to remove from database", removedItemCount);
+        db.RemoveRange(toRemove);
+        db.SaveChanges();
+
+        var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
+        db.Tags.RemoveRange(orphanTags);
+        db.SaveChanges();
+        */
     }
 
     
