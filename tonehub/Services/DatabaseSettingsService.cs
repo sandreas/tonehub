@@ -1,11 +1,17 @@
 using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json.Linq;
 using tonehub.Database;
+using tonehub.Database.Models;
 
 namespace tonehub.Services;
 
 public class DatabaseSettingsService
 {
     private readonly AppDbContext _db;
+    private Dictionary<string, JToken?> defaultValues = new()    {
+        {"mediaPath", null},
+        {"deleteOrphansAfterSeconds", new JValue(86400)},
+    };
 
     public DatabaseSettingsService(IDbContextFactory<AppDbContext> db)
     {
@@ -28,7 +34,15 @@ public class DatabaseSettingsService
     
     public T? Get<T>(string key)
     {
-        var setting = _db.Settings.FirstOrDefault(s => s.Key == key);
+        var setting = _db.Settings.FirstOrDefault(s => s.Key == key && !s.Disabled);
+        if(setting == null && defaultValues.ContainsKey(key) && defaultValues[key] != null)
+        {
+            setting = new Setting
+            {
+                Key = key,
+                Value = defaultValues[key] ?? new JObject()
+            };
+        }
         return setting == null ? default : setting.Value.ToObject<T>();
     }
 }

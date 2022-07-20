@@ -2,7 +2,7 @@ using JsonApiDotNetCore.Resources.Annotations;
 
 namespace tonehub.Database.Models;
 
-public class Tag : ModelBase
+public class Tag : ModelBaseDated
 {
     [Attr] public string Value { get; set; } = "";
 

@@ -3,7 +3,7 @@ using JsonApiDotNetCore.Resources.Annotations;
 
 namespace tonehub.Database.Models;
 
-public class FileTag : ModelBase
+public class FileTag : ModelBaseDated
 {
     [StringLength(255)][Attr] public string Namespace { get; set; } = "default";
     [Attr] public uint Type { get; set; } = 0;

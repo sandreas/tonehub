@@ -11,6 +11,10 @@ using tonehub.Options;
 using tonehub.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+// https://docs.microsoft.com/de-de/aspnet/core/fundamentals/configuration/?view=aspnetcore-6.0
+// ToneHub__DatabaseUri
+builder.Configuration.AddEnvironmentVariables();
+
 builder.Services.Configure<ToneHubOptions>(builder.Configuration.GetSection("ToneHub"));
 builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
     {

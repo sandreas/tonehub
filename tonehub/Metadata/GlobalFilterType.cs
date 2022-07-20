@@ -12,4 +12,5 @@ public enum GlobalFilterType
     Ringtone = 14,
     ItunesU = 23,
         
+    Mixed = int.MaxValue
 }

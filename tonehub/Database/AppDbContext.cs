@@ -1,8 +1,4 @@
-using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.ChangeTracking;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using tonehub.Database.Models;
 
@@ -13,14 +9,17 @@ public class AppDbContext : DbContext
 
     // disable non nullable warning (I did not find a way to overcome this build warning)
 #pragma warning disable 8618
-    public DbSet<Setting> Settings { get; set; }
 
+    public DbSet<FileAction> FileActions { get; set; }
+    public DbSet<FileJsonValue> FileJsonValues { get; set; }
     public DbSet<Models.File> Files { get; set; }
     public DbSet<FileTag> FileTags { get; set; }
+    public DbSet<Setting> Settings { get; set; }
+    public DbSet<SmartFileList> SmartFileLists { get; set; }
+    public DbSet<StaticFileList> StaticFileLists { get; set; }
     public DbSet<Tag> Tags { get; set; }
-    public DbSet<FileJsonValue> FileJsonValues { get; set; }
 
-        
+
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
 
@@ -40,7 +39,7 @@ public class AppDbContext : DbContext
 
         foreach (var changedEntity in ChangeTracker.Entries())
         {
-            if (changedEntity.Entity is ModelBase entity)
+            if (changedEntity.Entity is ModelBaseDated entity)
             {
                 switch (changedEntity.State)
                 {

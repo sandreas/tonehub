@@ -7,7 +7,7 @@ using tonehub.Metadata;
 namespace tonehub.Database.Models;
 
 [Index(nameof(Location), IsUnique = true)]
-public class File : ModelBase
+public class File : ModelBaseDatedDisabled
 {
     [Attr] public GlobalFilterType GlobalFilterType { get; set; } = GlobalFilterType.Unspecified;
 

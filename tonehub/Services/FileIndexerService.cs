@@ -6,6 +6,7 @@ using tonehub.Database;
 using tonehub.Database.Models;
 using tonehub.Metadata;
 using tonehub.Mime;
+using tonehub.Settings;
 using FileModel = tonehub.Database.Models.File;
 
 namespace tonehub.Services;
@@ -20,14 +21,16 @@ public class FileIndexerService
     private DateTimeOffset? _lastSuccessfulRun;
     private readonly AudioHashBuilder _hashBuilder;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
+    private readonly FileIndexerSettings _settings;
 
-    public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector, AudioFileTagLoader tagLoader, AudioHashBuilder hashBuilder, IDbContextFactory<AppDbContext> dbFactory)
+    public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector, AudioFileTagLoader tagLoader, AudioHashBuilder hashBuilder, IDbContextFactory<AppDbContext> dbFactory, FileIndexerSettings settings)
     {
         _fileWalker = fileWalker;
         _tagLoader = tagLoader;
         _hashBuilder = hashBuilder;
         _dbFactory = dbFactory;
         _mimeDetector = mimeDetector;
+        _settings = settings;
     }
     
     public void Run(string mediaPath) {
@@ -42,7 +45,7 @@ public class FileIndexerService
             var files = _fileWalker.WalkRecursive(mediaPath).SelectFileInfo().Where(_tagLoader.Supports).ToArray();
             using var db = _dbFactory.CreateDbContext();
             UpdateFileTags(db, files, mediaPath);
-            DeleteOrphanedFileTags(db, files);
+            DeleteOrphanedFileTags(db);
             
             _lastSuccessfulRun = DateTimeOffset.UtcNow;
         }
@@ -213,11 +216,19 @@ public class FileIndexerService
         return relPath.Replace(Path.DirectorySeparatorChar, '/').TrimStart('/');
     }
     
-    private void DeleteOrphanedFileTags(AppDbContext db, IFileInfo[] files)
+    private void DeleteOrphanedFileTags(AppDbContext db)
     {
-        // todo: Disable files first, dependant on setting: deleteOrphansAfterSeconds
-        // var deleteFiles = db.Files.Where(f => f.UpdatedDate <= _indexingInProgressSince).ToList();
-        var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < _indexingInProgressSince).ToList();
+        var enabledFromDate = _indexingInProgressSince;
+        // todo: sqlite does not allow query evaluation... must be client side.
+        var disableFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < enabledFromDate).ToList();
+        foreach(var fileRecord in disableFiles)
+        {
+            fileRecord.Disabled = true;
+        }
+        db.Files.UpdateRange(disableFiles);
+        
+        var keepFromDate = _indexingInProgressSince?.Subtract(_settings.DeleteOrphansAfter) ?? DateTime.MinValue;
+        var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < keepFromDate).ToList();
         foreach(var fileRecord in deleteFiles){
             db.FileTags.RemoveRange(fileRecord.FileTags);
             db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
@@ -228,34 +239,6 @@ public class FileIndexerService
         var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
         db.Tags.RemoveRange(orphanTags);
         db.SaveChanges();
-        /*
-        var param = new NpgsqlParameter("@LastIndexerRun", LastIndexerRun);
-            
-        
-        var sql = "DELETE FROM FileTag WHERE FileId IN (SELECT Id FROM Files WHERE UpdateDate < @LastIndexerRun)";
-        _ = db.Database.ExecuteSqlRaw(sql, param);
-        
-        sql = "DELETE FROM Files WHERE UpdateDate < @LastIndexerRun";
-        var removedItemCount = db.Database.ExecuteSqlRaw(sql, param);
-*/
-
-        // _logger.Information("found {DirtyRecordCount} to remove from database", removedItemCount);
-        //db.RemoveRange(toRemove);
-        //db.SaveChanges();
-        /*
-        var toRemove = db.Files.Where(f => f.UpdatedDate < _indexingInProgressSince);
-        foreach(var fileRecord in toRemove)        {
-            db.FileTags.RemoveRange(fileRecord.FileTags);
-            db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
-        }
-        // _logger.Information("found {DirtyRecordCount} to remove from database", removedItemCount);
-        db.RemoveRange(toRemove);
-        db.SaveChanges();
-
-        var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
-        db.Tags.RemoveRange(orphanTags);
-        db.SaveChanges();
-        */
     }
 
     

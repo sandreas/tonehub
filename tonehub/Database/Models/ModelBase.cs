@@ -11,9 +11,6 @@ public class ModelBase: Identifiable<Guid>
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
     public override Guid Id { get; set; }
 
-    [Attr] public DateTimeOffset CreatedDate { get; set; }
 
 
-    [Attr] public DateTimeOffset UpdatedDate { get; set; }
-    
 }
