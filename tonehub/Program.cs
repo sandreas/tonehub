@@ -15,13 +15,13 @@ var builder = WebApplication.CreateBuilder(args);
 // https://docs.microsoft.com/de-de/aspnet/core/fundamentals/configuration/?view=aspnetcore-6.0
 // ToneHub__DatabaseUri
 builder.Configuration.AddEnvironmentVariables();
-
 builder.Services.Configure<ToneHubOptions>(builder.Configuration.GetSection("ToneHub"));
 builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
     {
         var settings = services.GetRequiredService<IOptions<ToneHubOptions>>();
         var connectionString = Utility.UriToConnectionString(settings.Value.DatabaseUri);
         options.UseSqlite(connectionString);
+        // options.UseNpgsql(connectionString);
     }
 );
 // Add services to the container.
@@ -44,8 +44,8 @@ builder.Services.AddSingleton(_ => new FileExtensionContentTypeProvider
 });
 
 
-builder.Services.AddJsonApi<AppDbContext>();
-
+builder.Services.AddJsonApi<AppDbContext>(options => options.Namespace = "api");
+// builder.Services.AddJsonApi<AppDbContext>();
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -78,9 +78,6 @@ app.UseRouting();
 app.UseJsonApi();
 
 app.MapControllers();
-
-app.Run();
-
 
 // await CreateDatabaseAsync(app.Services);
 
