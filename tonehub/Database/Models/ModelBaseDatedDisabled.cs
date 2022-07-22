@@ -4,5 +4,6 @@ namespace tonehub.Database.Models;
 
 public class ModelBaseDatedDisabled: ModelBaseDated
 {
-    [Attr] public bool Disabled { get; set; } = false;
+    
+    [Attr] public bool Disabled { get; set; }
 }

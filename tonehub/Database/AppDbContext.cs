@@ -32,6 +32,10 @@ public class AppDbContext : DbContext
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<Setting, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<FileAction, JToken>(vsi => vsi.Context));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<SmartFileList, JToken>(vsi => vsi.Query));
+        
+        // does not work with sqlite
+        // modelBuilder.Entity<Setting>().Property(p => p.Disabled).HasDefaultValue(false);
+        
         base.OnModelCreating(modelBuilder);
     }
         

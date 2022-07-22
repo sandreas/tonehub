@@ -2,6 +2,7 @@ version: '3'
 
 services:
   postgres:
+    # user: "${UID}:${GID}"
     image: postgres:latest
     restart: always
     environment:
@@ -12,7 +13,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./var/docker/postgres/pg-data:/pg-data
+      - ../var/docker/postgres/pg-data:/pg-data # ./var leads to ef permission exception
   adminer:
     image: adminer
     restart: always

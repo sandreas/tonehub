@@ -59,26 +59,41 @@ public class FileIndexerService
     private void UpdateFileTags(AppDbContext db, IEnumerable<IFileInfo> files, string mediaPath)
     {
         foreach(var file in files)
-        {
+        {                
             var normalizedLocation = NormalizeLocationFromPath(mediaPath, file);
-            var existingFile = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
-            if(existingFile == null)
+            FileModel? existingFile;
+            try
             {
-                existingFile = HandleMissingFile(db, file, normalizedLocation);
-            } else {
-                HandleExistingFile(file, normalizedLocation, existingFile);
+                existingFile = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
+                if(existingFile == null)
+                {
+                    existingFile = HandleMissingFile(db, file, normalizedLocation);
+                } else {
+                    HandleExistingFile(file, normalizedLocation, existingFile);
+                }
+            
+                if(existingFile.IsNew)
+                {
+                    db.Files.Add(existingFile);
+                } else {
+                    db.Files.Update(existingFile);
+                }
+            
+                if(existingFile.HasChanged)    {
+                    UpdateFileRecordTagsAndJsonValues(db, existingFile, file);
+                }
+            }
+            catch(DbUpdateException e){
+                if(e.InnerException != null && e.InnerException.Message.Contains("duplicate key"))
+                {
+                    Console.WriteLine("duplicate key");
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
             }
             
-            if(existingFile.IsNew)
-            {
-                db.Files.Add(existingFile);
-            } else {
-                db.Files.Update(existingFile);
-            }
-            
-            if(existingFile.HasChanged)    {
-                UpdateFileRecordTagsAndJsonValues(db, existingFile, file);
-            }
         }
     }
 

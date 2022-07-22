@@ -19,9 +19,19 @@ builder.Services.Configure<ToneHubOptions>(builder.Configuration.GetSection("Ton
 builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
     {
         var settings = services.GetRequiredService<IOptions<ToneHubOptions>>();
+        
         var connectionString = Utility.UriToConnectionString(settings.Value.DatabaseUri);
-        options.UseSqlite(connectionString);
-        // options.UseNpgsql(connectionString);
+        switch(settings.Value.DatabaseUri.Scheme){
+            case "sqlite":
+                options.UseSqlite(connectionString);
+                break;
+            case "pgsql":
+                options.UseNpgsql(connectionString);
+                // https://stackoverflow.com/questions/69961449/net6-and-datetime-problem-cannot-write-datetime-with-kind-utc-to-postgresql-ty/70142836#70142836
+                AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+                break;
+        }
+        
     }
 );
 // Add services to the container.

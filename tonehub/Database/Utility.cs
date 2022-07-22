@@ -17,6 +17,7 @@ public class Utility
     {
         
         var userInfo = Uri.UnescapeDataString(uri.UserInfo).Split(":");
+        var port = uri.Port <= 0 ? 5432 : uri.Port;
         var username = userInfo[0];
         var password = userInfo.Length > 1 ? userInfo[1] : "";
         var host = uri.Host;
@@ -31,6 +32,7 @@ public class Utility
         {
             connectionStringParts.Add($"Password={password}");
         }
+        connectionStringParts.Add($"Port={port}");
         return string.Join(";", connectionStringParts);
     }
 
