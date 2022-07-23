@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using System.Text;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Sandreas.Files;
@@ -16,14 +17,16 @@ public class FileIndexerService
     private readonly FileWalker _fileWalker;
     private readonly IFileTagLoader _tagLoader;
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
-    
+
     private DateTimeOffset? _indexingInProgressSince;
     private DateTimeOffset? _lastSuccessfulRun;
     private readonly AudioHashBuilder _hashBuilder;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
     private readonly FileIndexerSettings _settings;
 
-    public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector, AudioFileTagLoader tagLoader, AudioHashBuilder hashBuilder, IDbContextFactory<AppDbContext> dbFactory, FileIndexerSettings settings)
+    public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector,
+        AudioFileTagLoader tagLoader, AudioHashBuilder hashBuilder, IDbContextFactory<AppDbContext> dbFactory,
+        FileIndexerSettings settings)
     {
         _fileWalker = fileWalker;
         _tagLoader = tagLoader;
@@ -32,83 +35,94 @@ public class FileIndexerService
         _mimeDetector = mimeDetector;
         _settings = settings;
     }
-    
-    public void Run(string mediaPath) {
+
+    public bool Run(string mediaPath)
+    {
         try
         {
-            if(_indexingInProgressSince != null)
+            if (_indexingInProgressSince != null)
             {
-                return;
+                return true;
             }
+
             _indexingInProgressSince = DateTimeOffset.UtcNow;
-            
+
             var files = _fileWalker.WalkRecursive(mediaPath).SelectFileInfo().Where(_tagLoader.Supports).ToArray();
-            using var db = _dbFactory.CreateDbContext();
-            UpdateFileTags(db, files, mediaPath);
-            DeleteOrphanedFileTags(db);
-            
-            _lastSuccessfulRun = DateTimeOffset.UtcNow;
+            if (UpdateFileTags(files, mediaPath) && DeleteOrphanedFileTags())
+            {
+                _lastSuccessfulRun = DateTimeOffset.UtcNow;
+                return true;
+            }
+            else
+            {
+                return false;
+            }
         }
         finally
         {
             _indexingInProgressSince = null;
         }
-
     }
-    
-    private void UpdateFileTags(AppDbContext db, IEnumerable<IFileInfo> files, string mediaPath)
+
+    private bool UpdateFileTags(IEnumerable<IFileInfo> files, string mediaPath)
     {
-        foreach(var file in files)
-        {                
+
+        foreach (var file in files)
+        {
+
             var normalizedLocation = NormalizeLocationFromPath(mediaPath, file);
             FileModel? existingFile;
             try
             {
+                using var db = _dbFactory.CreateDbContext();
+
                 existingFile = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
-                if(existingFile == null)
+                if (existingFile == null)
                 {
                     existingFile = HandleMissingFile(db, file, normalizedLocation);
-                } else {
+                }
+                else
+                {
                     HandleExistingFile(file, normalizedLocation, existingFile);
                 }
-            
-                if(existingFile.IsNew)
+
+                if (existingFile.IsNew)
                 {
                     db.Files.Add(existingFile);
-                } else {
+                }
+                else
+                {
                     db.Files.Update(existingFile);
                 }
-            
-                if(existingFile.HasChanged)    {
+
+                if (existingFile.HasChanged)
+                {
                     UpdateFileRecordTagsAndJsonValues(db, existingFile, file);
                 }
-            }
-            catch(DbUpdateException e){
-                if(e.InnerException != null && e.InnerException.Message.Contains("duplicate key"))
-                {
-                    Console.WriteLine("duplicate key");
-                }
+                
             }
             catch (Exception e)
             {
                 Console.WriteLine(e.Message);
+                return false;
             }
-            
         }
+
+        return true;
     }
 
     private void HandleExistingFile(IFileInfo file, string normalizedLocation, FileModel existingFileModel)
     {
-
         // file must always be marked as changed because of orphan detection
         existingFileModel.HasChanged = true;
-        if(existingFileModel.ModifiedDate < file.LastWriteTime)
+        if (existingFileModel.ModifiedDate < file.LastWriteTime)
         {
             // if file has been modified, hash has to be recalculated, GlobalFilterType reset
             // because file could have been replaced
             existingFileModel.GlobalFilterType = _tagLoader.LoadGlobalFilterType(file);
             UpdateFileRecord(existingFileModel, file, normalizedLocation, "");
-        } else
+        }
+        else
         {
             existingFileModel.LastCheckDate = DateTimeOffset.UtcNow;
         }
@@ -120,14 +134,15 @@ public class FileIndexerService
         {
             var hash = BuildFullHashAsHexString(file);
             var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash);
-            return existingRecord == null ? CreateNewFileRecord(file, normalizedLocation, hash) : UpdateFileRecord(existingRecord, file, normalizedLocation, existingRecord.Hash);
+            return existingRecord == null
+                ? CreateNewFileRecord(file, normalizedLocation, hash)
+                : UpdateFileRecord(existingRecord, file, normalizedLocation, existingRecord.Hash);
         }
         catch (Exception e)
         {
             Console.WriteLine(e);
             throw;
         }
-
     }
 
     private void UpdateFileRecordTagsAndJsonValues(AppDbContext db, FileModel fileRecord, IFileInfo file)
@@ -135,7 +150,7 @@ public class FileIndexerService
         fileRecord.FileTags = fileRecord.FileTags.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
 
         var loadedRawTags = _tagLoader.LoadTags(file);
-        
+
         var tagsToStore = loadedRawTags.Select(t => new FileTag()
         {
             Namespace = t.Namespace,
@@ -147,11 +162,12 @@ public class FileIndexerService
         {
             fileRecord.FileTags.Add(t);
         }
-        
-        fileRecord.FileJsonValues = fileRecord.FileJsonValues.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
+
+        fileRecord.FileJsonValues =
+            fileRecord.FileJsonValues.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
 
         var loadedRawJsonValues = _tagLoader.LoadJsonValues(file);
-        
+
         var jsonValuesToStore = loadedRawJsonValues.Select(t => new FileJsonValue()
         {
             Namespace = t.Namespace,
@@ -166,8 +182,8 @@ public class FileIndexerService
 
         db.SaveChanges();
     }
-    
-    
+
+
     private static Tag FindOrCreateTag(AppDbContext db, string tagValue)
     {
         // _logger.Information("Adding tag {TagValue}", tagValue.ToString());
@@ -179,6 +195,12 @@ public class FileIndexerService
         {
             // _logger.Information("Already exists");
             return existing;
+        }
+
+        // limit value bytes to 2500 (due to some indexes like pgsql supporting only 2704 bytes)
+        while (Encoding.UTF8.GetByteCount(tagValue) > 2500)
+        {
+            tagValue = tagValue.Substring(0, tagValue.Length - 1);
         }
 
         var newTag = new Tag()
@@ -194,10 +216,11 @@ public class FileIndexerService
     {
         return Convert.ToHexString(_hashBuilder.BuildFullHash(file));
     }
-    
+
     private FileModel CreateNewFileRecord(IFileInfo file, string normalizedLocation, string hash)
     {
-        var newFileRecord = new FileModel {
+        var newFileRecord = new FileModel
+        {
             IsNew = true,
             GlobalFilterType = _tagLoader.LoadGlobalFilterType(file)
         };
@@ -206,15 +229,17 @@ public class FileIndexerService
 
     private FileModel UpdateFileRecord(FileModel fileRecord, IFileInfo file, string normalizedLocation, string hash)
     {
-        if(fileRecord.MimeMediaType == "" || fileRecord.MimeSubType == ""){
-            if(!TryLoadFileMimeType(file.FullName, out var mimeType))
+        if (fileRecord.MimeMediaType == "" || fileRecord.MimeSubType == "")
+        {
+            if (!TryLoadFileMimeType(file.FullName, out var mimeType))
             {
                 throw new Exception("Could not fill record basics: MimeType fail");
             }
+
             fileRecord.MimeMediaType = mimeType.MediaType;
             fileRecord.MimeSubType = mimeType.SubType;
         }
-        
+
         fileRecord.Hash = hash == "" ? BuildFullHashAsHexString(file) : hash;
         fileRecord.Location = normalizedLocation;
         fileRecord.Size = file.Length;
@@ -222,7 +247,7 @@ public class FileIndexerService
         fileRecord.LastCheckDate = DateTimeOffset.UtcNow;
         return fileRecord;
     }
-    
+
     private static string NormalizeLocationFromPath(string mediaPath, IFileSystemInfo file)
     {
         var relPath = file.FullName.StartsWith(mediaPath)
@@ -230,33 +255,47 @@ public class FileIndexerService
             : file.FullName;
         return relPath.Replace(Path.DirectorySeparatorChar, '/').TrimStart('/');
     }
-    
-    private void DeleteOrphanedFileTags(AppDbContext db)
+
+    private bool DeleteOrphanedFileTags()
     {
-        var enabledFromDate = _indexingInProgressSince;
-        // todo: sqlite does not allow query evaluation... must be client side.
-        var disableFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < enabledFromDate).ToList();
-        foreach(var fileRecord in disableFiles)
+        try
         {
-            fileRecord.Disabled = true;
+            using var db = _dbFactory.CreateDbContext();
+
+            var enabledFromDate = _indexingInProgressSince;
+            // todo: sqlite does not allow query evaluation... must be client side.
+            var disableFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < enabledFromDate).ToList();
+            foreach (var fileRecord in disableFiles)
+            {
+                fileRecord.Disabled = true;
+            }
+
+            db.Files.UpdateRange(disableFiles);
+
+            var keepFromDate = _indexingInProgressSince?.Subtract(_settings.DeleteOrphansAfter) ?? DateTime.MinValue;
+            var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < keepFromDate).ToList();
+            foreach (var fileRecord in deleteFiles)
+            {
+                db.FileTags.RemoveRange(fileRecord.FileTags);
+                db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
+            }
+
+            db.RemoveRange(deleteFiles);
+            db.SaveChanges();
+
+            var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
+            db.Tags.RemoveRange(orphanTags);
+            db.SaveChanges();
         }
-        db.Files.UpdateRange(disableFiles);
-        
-        var keepFromDate = _indexingInProgressSince?.Subtract(_settings.DeleteOrphansAfter) ?? DateTime.MinValue;
-        var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < keepFromDate).ToList();
-        foreach(var fileRecord in deleteFiles){
-            db.FileTags.RemoveRange(fileRecord.FileTags);
-            db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
+        catch (Exception e)
+        {
+            return false;
         }
-        db.RemoveRange(deleteFiles);
-        db.SaveChanges();
-        
-        var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
-        db.Tags.RemoveRange(orphanTags);
-        db.SaveChanges();
+
+        return true;
     }
 
-    
+
     private bool TryLoadFileMimeType(string path, out MimeType mimeType)
     {
         mimeType = new MimeType();

@@ -6,7 +6,9 @@ using tonehub.Metadata;
 
 namespace tonehub.Database.Models;
 
+[Index(nameof(Hash), IsUnique = true)]
 [Index(nameof(Location), IsUnique = true)]
+
 public class File : ModelBaseDatedDisabled
 {
     [Attr] public GlobalFilterType GlobalFilterType { get; set; } = GlobalFilterType.Unspecified;
@@ -21,8 +23,6 @@ public class File : ModelBaseDatedDisabled
     [Attr] public DateTimeOffset ModifiedDate { get; set; }
     [Attr] public DateTimeOffset LastCheckDate { get; set; }
 
-
-    
     [HasMany] public virtual ICollection<FileTag> FileTags { get; set; } = new List<FileTag>();
     [HasMany] public virtual ICollection<FileJsonValue> FileJsonValues { get; set; } = new List<FileJsonValue>();
         

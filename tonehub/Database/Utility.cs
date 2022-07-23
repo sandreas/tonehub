@@ -1,3 +1,5 @@
+using System.Web;
+
 namespace tonehub.Database;
 
 public class Utility
@@ -31,6 +33,16 @@ public class Utility
         if (password != "")
         {
             connectionStringParts.Add($"Password={password}");
+        }
+        
+        if(uri.Query.Length > 0)
+        {
+            var nvc = HttpUtility.ParseQueryString(uri.Query);
+            string[] keys = nvc.AllKeys.Where(x => x != null).ToArray()!;
+            var dict = keys.ToDictionary(k => k, k => nvc[k]);
+            foreach(var (key, value) in dict){
+                connectionStringParts.Add($"{key}={value}");
+            }
         }
         connectionStringParts.Add($"Port={port}");
         return string.Join(";", connectionStringParts);
@@ -66,6 +78,9 @@ public class Utility
         {
             connectionStringParts.Add($"Password={password}");
         }
+        
+
+        
 
         return string.Join(";", connectionStringParts);
     }

@@ -8,6 +8,7 @@ public class AudioFileTagLoader : IFileTagLoader
 {
     public static readonly MetadataProperty[] JsonProperties =
     {
+        MetadataProperty.LongDescription,
         MetadataProperty.Lyrics,
         MetadataProperty.Chapters,
         MetadataProperty.EmbeddedPictures,
@@ -51,8 +52,13 @@ public class AudioFileTagLoader : IFileTagLoader
             if(MetadataExtensions.IsEmpty(value))            {
                 continue;
             }
+            // convert dates into a culture invariant format, that can be used for "between"
+            var stringValue = value switch  {
+                    DateTime d => d.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fff'Z'"),
+                _ => value?.ToString()
+            }
+            ;
             
-            var stringValue = value?.ToString();
             if (string.IsNullOrEmpty(stringValue))
             {
                 continue;
@@ -73,6 +79,11 @@ public class AudioFileTagLoader : IFileTagLoader
             yield return (Namespace, (uint)MetadataProperty.AdditionalFields, JObject.FromObject(unmappedAdditionalFields));
         }
 
+        
+        if(track.LongDescription?.Length > 0){
+            yield return (Namespace, (uint)MetadataProperty.LongDescription, new JValue(track.LongDescription));
+        }
+        
         if (track.Chapters.Count > 0)
         {
             // todo: find better represenation of chapters and lyrics
