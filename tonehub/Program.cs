@@ -38,8 +38,7 @@ builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
 builder.Services.AddSingleton<DatabaseSettingsService>();
 builder.Services.AddSingleton<FileSystem>();
 builder.Services.AddSingleton<FileWalker>();
-builder.Services.AddSingleton<AudioFileTagLoader>();
-builder.Services.AddSingleton<AudioHashBuilder>();
+builder.Services.AddSingleton<AudioFileLoader>();
 builder.Services.AddSingleton(s => new FileIndexerSettings
 {
     DeleteOrphansAfter = TimeSpan.FromSeconds(86400)

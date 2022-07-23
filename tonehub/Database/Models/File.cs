@@ -6,7 +6,6 @@ using tonehub.Metadata;
 
 namespace tonehub.Database.Models;
 
-[Index(nameof(Hash), IsUnique = true)]
 [Index(nameof(Location), IsUnique = true)]
 
 public class File : ModelBaseDatedDisabled

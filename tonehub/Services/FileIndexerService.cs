@@ -15,22 +15,20 @@ namespace tonehub.Services;
 public class FileIndexerService
 {
     private readonly FileWalker _fileWalker;
-    private readonly IFileTagLoader _tagLoader;
+    private readonly IFileLoader _tagLoader;
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
 
     private DateTimeOffset? _indexingInProgressSince;
     private DateTimeOffset? _lastSuccessfulRun;
-    private readonly AudioHashBuilder _hashBuilder;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
     private readonly FileIndexerSettings _settings;
 
     public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector,
-        AudioFileTagLoader tagLoader, AudioHashBuilder hashBuilder, IDbContextFactory<AppDbContext> dbFactory,
+        AudioFileLoader tagLoader, IDbContextFactory<AppDbContext> dbFactory,
         FileIndexerSettings settings)
     {
         _fileWalker = fileWalker;
         _tagLoader = tagLoader;
-        _hashBuilder = hashBuilder;
         _dbFactory = dbFactory;
         _mimeDetector = mimeDetector;
         _settings = settings;
@@ -74,8 +72,9 @@ public class FileIndexerService
             FileModel? existingFile;
             try
             {
+                _tagLoader.Initialize(file);
                 using var db = _dbFactory.CreateDbContext();
-
+                
                 existingFile = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
                 if (existingFile == null)
                 {
@@ -97,7 +96,7 @@ public class FileIndexerService
 
                 if (existingFile.HasChanged)
                 {
-                    UpdateFileRecordTagsAndJsonValues(db, existingFile, file);
+                    UpdateFileRecordTagsAndJsonValues(db, existingFile);
                 }
                 
             }
@@ -119,7 +118,7 @@ public class FileIndexerService
         {
             // if file has been modified, hash has to be recalculated, GlobalFilterType reset
             // because file could have been replaced
-            existingFileModel.GlobalFilterType = _tagLoader.LoadGlobalFilterType(file);
+            existingFileModel.GlobalFilterType = _tagLoader.LoadGlobalFilterType();
             UpdateFileRecord(existingFileModel, file, normalizedLocation, "");
         }
         else
@@ -132,7 +131,7 @@ public class FileIndexerService
     {
         try
         {
-            var hash = BuildFullHashAsHexString(file);
+            var hash = BuildFullHashAsHexString();
             var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash);
             return existingRecord == null
                 ? CreateNewFileRecord(file, normalizedLocation, hash)
@@ -145,11 +144,11 @@ public class FileIndexerService
         }
     }
 
-    private void UpdateFileRecordTagsAndJsonValues(AppDbContext db, FileModel fileRecord, IFileInfo file)
+    private void UpdateFileRecordTagsAndJsonValues(AppDbContext db, FileModel fileRecord)
     {
-        fileRecord.FileTags = fileRecord.FileTags.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
+        fileRecord.FileTags = fileRecord.FileTags.Where(t => t.Type < IFileLoader.CustomTagTypeStart).ToList();
 
-        var loadedRawTags = _tagLoader.LoadTags(file);
+        var loadedRawTags = _tagLoader.LoadTags();
 
         var tagsToStore = loadedRawTags.Select(t => new FileTag()
         {
@@ -164,9 +163,9 @@ public class FileIndexerService
         }
 
         fileRecord.FileJsonValues =
-            fileRecord.FileJsonValues.Where(t => t.Type < IFileTagLoader.CustomTagTypeStart).ToList();
+            fileRecord.FileJsonValues.Where(t => t.Type < IFileLoader.CustomTagTypeStart).ToList();
 
-        var loadedRawJsonValues = _tagLoader.LoadJsonValues(file);
+        var loadedRawJsonValues = _tagLoader.LoadJsonValues();
 
         var jsonValuesToStore = loadedRawJsonValues.Select(t => new FileJsonValue()
         {
@@ -212,9 +211,9 @@ public class FileIndexerService
         return newTag;
     }
 
-    private string BuildFullHashAsHexString(IFileInfo file)
+    private string BuildFullHashAsHexString()
     {
-        return Convert.ToHexString(_hashBuilder.BuildFullHash(file));
+        return Convert.ToHexString(_tagLoader.BuildHash());
     }
 
     private FileModel CreateNewFileRecord(IFileInfo file, string normalizedLocation, string hash)
@@ -222,7 +221,7 @@ public class FileIndexerService
         var newFileRecord = new FileModel
         {
             IsNew = true,
-            GlobalFilterType = _tagLoader.LoadGlobalFilterType(file)
+            GlobalFilterType = _tagLoader.LoadGlobalFilterType()
         };
         return UpdateFileRecord(newFileRecord, file, normalizedLocation, hash);
     }
@@ -240,7 +239,7 @@ public class FileIndexerService
             fileRecord.MimeSubType = mimeType.SubType;
         }
 
-        fileRecord.Hash = hash == "" ? BuildFullHashAsHexString(file) : hash;
+        fileRecord.Hash = hash == "" ? BuildFullHashAsHexString() : hash;
         fileRecord.Location = normalizedLocation;
         fileRecord.Size = file.Length;
         fileRecord.ModifiedDate = file.LastWriteTime;
