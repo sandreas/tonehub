@@ -11,6 +11,7 @@ public class DatabaseSettingsService
     private Dictionary<string, JToken?> defaultValues = new()    {
         {"mediaPath", null},
         {"deleteOrphansAfterSeconds", new JValue(86400)},
+        {"maxHashBytes", new JValue(5*1024*1024)},
     };
 
     public DatabaseSettingsService(IDbContextFactory<AppDbContext> db)

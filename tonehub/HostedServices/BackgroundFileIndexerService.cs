@@ -38,11 +38,24 @@ public class BackgroundFileIndexerService: IHostedService, IDisposable
                 _timer.Change(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
                 return;
             }
+            
+            if(_fileIndexer.IsRunning){
+                Console.WriteLine("fileIndexer is still running");
+                _timer.Change(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
+                return;
+            }
+            
             Console.WriteLine("setting: " + mediaPath);
             Console.WriteLine("perform index update");
             if(!_fileIndexer.Run(mediaPath))
             {
+                // todo remove
+                Console.WriteLine("failed fileindexer run");
                 _timer.Change(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+            } else {
+                // todo remove
+                Console.WriteLine("successful fileindexer run");
             }
             
             // todo: introduce a setting for rerunning a timer?! or just add filesystem watchers

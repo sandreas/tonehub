@@ -39,7 +39,7 @@ builder.Services.AddSingleton<DatabaseSettingsService>();
 builder.Services.AddSingleton<FileSystem>();
 builder.Services.AddSingleton<FileWalker>();
 builder.Services.AddSingleton<AudioFileLoader>();
-builder.Services.AddSingleton(s => new FileIndexerSettings
+builder.Services.AddSingleton(_ => new FileIndexerSettings
 {
     DeleteOrphansAfter = TimeSpan.FromSeconds(86400)
 });
@@ -82,11 +82,18 @@ app.UseHttpsRedirection();
 
 app.UseAuthorization();
 
+
 app.UseRouting();
 
 app.UseJsonApi();
 
+app.MapControllerRoute(
+    name: "default",
+    pattern: "api/{controller}/{action}/{id?}"
+);
+
 app.MapControllers();
+
 
 // await CreateDatabaseAsync(app.Services);
 

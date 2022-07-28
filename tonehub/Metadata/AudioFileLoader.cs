@@ -1,6 +1,7 @@
 using System.IO.Abstractions;
 using Newtonsoft.Json.Linq;
 using Sandreas.AudioMetadata;
+using tonehub.Services;
 using tonehub.StreamUtils;
 
 namespace tonehub.Metadata;
@@ -20,9 +21,20 @@ public class AudioFileLoader : FileLoaderBase
 
     private MetadataTrack _track = null!;
     private IFileInfo _file = null!;
-    
+    private readonly long _maxHashBytes;
+
 
     public override string Namespace => "audio";
+
+    public AudioFileLoader(DatabaseSettingsService settings)
+    {
+        if(!settings.TryGet<long>("maxHashBytes", out var maxHashBytes))
+        {
+            maxHashBytes = long.MaxValue;
+        }
+
+        _maxHashBytes = maxHashBytes;
+    }
     public override void Initialize(IFileInfo file)
     {
         _file = file;
@@ -105,9 +117,18 @@ public class AudioFileLoader : FileLoaderBase
     
     public override byte[] BuildHash()
     {
+        var (offset, length) = CalculateMidpointOffsetLength(_track.TechnicalInformation.AudioDataOffset,
+            _track.TechnicalInformation.AudioDataSize, _maxHashBytes);
         using var fileStream = _file.OpenRead();
-        using var input = new StreamLimiter(fileStream, _track.TechnicalInformation.AudioDataOffset, _track.TechnicalInformation.AudioDataSize);
+        using var input = new StreamLimiter(fileStream, offset, length);
         return HashFunction(input);
+    }
+    
+    private (long offset, long limit) CalculateMidpointOffsetLength(long dataOffset, long dataSize, long maxHashBytes){
+        var dataMidpoint = Convert.ToInt64(Math.Floor((dataOffset + dataSize) / (decimal)2));
+        var offset = Convert.ToInt64(Math.Max(dataMidpoint - maxHashBytes/(decimal)2, dataOffset));
+        var length = Math.Min(maxHashBytes, dataSize);
+        return (offset, length);
     }
 
     public override bool Supports(IFileInfo file)

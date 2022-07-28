@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Abstractions;
 using System.Text;
 using Microsoft.AspNetCore.StaticFiles;
@@ -22,6 +23,8 @@ public class FileIndexerService
     private DateTimeOffset? _lastSuccessfulRun;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
     private readonly FileIndexerSettings _settings;
+    private List<string> _debugList = new();
+    private Stopwatch _stopWatch;
 
     public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector,
         AudioFileLoader tagLoader, IDbContextFactory<AppDbContext> dbFactory,
@@ -32,8 +35,11 @@ public class FileIndexerService
         _dbFactory = dbFactory;
         _mimeDetector = mimeDetector;
         _settings = settings;
+        _stopWatch = new Stopwatch();
     }
 
+    public bool IsRunning => _indexingInProgressSince != null;
+    
     public bool Run(string mediaPath)
     {
         try
@@ -65,39 +71,58 @@ public class FileIndexerService
     private bool UpdateFileTags(IEnumerable<IFileInfo> files, string mediaPath)
     {
 
+        var overallCounter = 0;
         foreach (var file in files)
         {
-
+            overallCounter++;
+            _stopWatch.Reset();
+            _stopWatch.Start();
+            _debugList = new List<string>();
             var normalizedLocation = NormalizeLocationFromPath(mediaPath, file);
-            FileModel? existingFile;
+            FileModel? fileRecord;
             try
             {
+                
                 _tagLoader.Initialize(file);
+                _debugList.Add($"==> _tagLoader.Initialize: {_stopWatch.Elapsed.TotalMilliseconds}");
                 using var db = _dbFactory.CreateDbContext();
                 
-                existingFile = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
-                if (existingFile == null)
+                fileRecord = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
+                if (fileRecord == null)
                 {
-                    existingFile = HandleMissingFile(db, file, normalizedLocation);
+                    fileRecord = HandleMissingFile(db, file, normalizedLocation);
                 }
                 else
                 {
-                    HandleExistingFile(file, normalizedLocation, existingFile);
+                    HandleExistingFile(file, normalizedLocation, fileRecord);
                 }
+                _debugList.Add($"==> fileRecord handling: {_stopWatch.Elapsed.TotalMilliseconds}");
 
-                if (existingFile.IsNew)
+
+                if (fileRecord.IsNew)
                 {
-                    db.Files.Add(existingFile);
+                    db.Files.Add(fileRecord);
                 }
                 else
                 {
-                    db.Files.Update(existingFile);
+                    db.Files.Update(fileRecord);
                 }
+                
+                _debugList.Add($"==> files.Add/Update: {_stopWatch.Elapsed.TotalMilliseconds}");
 
-                if (existingFile.HasChanged)
+
+                if (fileRecord.HasChanged)
                 {
-                    UpdateFileRecordTagsAndJsonValues(db, existingFile);
+                    UpdateFileRecordTagsAndJsonValues(db, fileRecord);
+                } else
+                {
+                    db.SaveChanges();
                 }
+                _debugList.Add($"==> files.UpdateTags: {_stopWatch.Elapsed.TotalMilliseconds} (HasChanged={fileRecord.HasChanged.ToString()}, IsNew={fileRecord.IsNew.ToString()})");
+                _debugList.Add($"==> overall count: {overallCounter}");
+                _stopWatch.Stop();
+
+                Console.WriteLine(string.Join("\n", _debugList));
                 
             }
             catch (Exception e)
@@ -113,9 +138,9 @@ public class FileIndexerService
     private void HandleExistingFile(IFileInfo file, string normalizedLocation, FileModel existingFileModel)
     {
         // file must always be marked as changed because of orphan detection
-        existingFileModel.HasChanged = true;
         if (existingFileModel.ModifiedDate < file.LastWriteTime)
         {
+            existingFileModel.HasChanged = true;
             // if file has been modified, hash has to be recalculated, GlobalFilterType reset
             // because file could have been replaced
             existingFileModel.GlobalFilterType = _tagLoader.LoadGlobalFilterType();
@@ -131,6 +156,8 @@ public class FileIndexerService
     {
         try
         {
+            _debugList.Add($"==> filesize: {file.Length * 1e-6}MB");
+
             var hash = BuildFullHashAsHexString();
             var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash);
             return existingRecord == null
@@ -150,6 +177,9 @@ public class FileIndexerService
 
         var loadedRawTags = _tagLoader.LoadTags();
 
+        // todo: performance improvements
+        // db.ChangeTracker.AutoDetectChangesEnabled = false;
+        
         var tagsToStore = loadedRawTags.Select(t => new FileTag()
         {
             Namespace = t.Namespace,
@@ -157,6 +187,7 @@ public class FileIndexerService
             File = fileRecord,
             Tag = FindOrCreateTag(db, t.Value)
         });
+       
         foreach (var t in tagsToStore)
         {
             fileRecord.FileTags.Add(t);
@@ -178,7 +209,10 @@ public class FileIndexerService
         {
             fileRecord.FileJsonValues.Add(t);
         }
-
+        
+        // todo performance improvements
+        // db.ChangeTracker.AutoDetectChangesEnabled = false;
+        
         db.SaveChanges();
     }
 
@@ -213,7 +247,10 @@ public class FileIndexerService
 
     private string BuildFullHashAsHexString()
     {
-        return Convert.ToHexString(_tagLoader.BuildHash());
+        _debugList.Add($"==> begin hashing: {_stopWatch.Elapsed.TotalMilliseconds}");
+        var result = Convert.ToHexString(_tagLoader.BuildHash());
+        _debugList.Add($"==> finish hashing: {_stopWatch.Elapsed.TotalMilliseconds}");
+        return result;
     }
 
     private FileModel CreateNewFileRecord(IFileInfo file, string normalizedLocation, string hash)
@@ -242,8 +279,9 @@ public class FileIndexerService
         fileRecord.Hash = hash == "" ? BuildFullHashAsHexString() : hash;
         fileRecord.Location = normalizedLocation;
         fileRecord.Size = file.Length;
-        fileRecord.ModifiedDate = file.LastWriteTime;
+        fileRecord.ModifiedDate = DateTime.SpecifyKind(file.LastWriteTime, DateTimeKind.Utc);
         fileRecord.LastCheckDate = DateTimeOffset.UtcNow;
+        fileRecord.Disabled = false;
         return fileRecord;
     }
 
