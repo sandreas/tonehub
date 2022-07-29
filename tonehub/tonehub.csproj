@@ -21,6 +21,15 @@
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="6.0.5" />
         <PackageReference Include="Sandreas.AudioMetadata" Version="0.0.7" />
         <PackageReference Include="Sandreas.Files" Version="1.1.1" />
+        <PackageReference Include="Serilog.AspNetCore" Version="6.0.1" />
+        <PackageReference Include="Serilog.Enrichers.ClientInfo" Version="1.2.0" />
+        <PackageReference Include="Serilog.Enrichers.Environment" Version="2.2.0" />
+        <PackageReference Include="Serilog.Exceptions" Version="8.3.0" />
+        <PackageReference Include="Serilog.Extensions.Logging" Version="3.1.0" />
+        <PackageReference Include="Serilog.Formatting.Compact" Version="1.1.0" />
+        <PackageReference Include="Serilog.Settings.Configuration" Version="3.3.0" />
+        <PackageReference Include="Serilog.Sinks.Async" Version="1.5.0" />
+        <PackageReference Include="Serilog.Sinks.Console" Version="4.0.1" />
         <PackageReference Include="Standart.Hash.xxHash" Version="4.0.4" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="6.2.3" />
         <PackageReference Include="SixLabors.ImageSharp" Version="2.1.3" />
@@ -31,6 +40,7 @@
     <ItemGroup>
       <Folder Include="Migrations" />
       <Folder Include="var\cache\images" />
+      <Folder Include="var\log" />
     </ItemGroup>
 
     <ItemGroup>
