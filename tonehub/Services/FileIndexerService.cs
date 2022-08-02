@@ -1,15 +1,16 @@
-using System.Diagnostics;
 using System.IO.Abstractions;
 using System.Text;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Sandreas.Files;
+using SerilogTimings.Extensions;
 using tonehub.Database;
 using tonehub.Database.Models;
 using tonehub.Metadata;
 using tonehub.Mime;
 using tonehub.Settings;
 using FileModel = tonehub.Database.Models.File;
+using ILogger = Serilog.ILogger;
 
 namespace tonehub.Services;
 
@@ -23,19 +24,18 @@ public class FileIndexerService
     private DateTimeOffset? _lastSuccessfulRun;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
     private readonly FileIndexerSettings _settings;
-    private List<string> _debugList = new();
-    private Stopwatch _stopWatch;
+    private readonly ILogger _logger;
 
-    public FileIndexerService(FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector,
+    public FileIndexerService(ILogger logger, FileWalker fileWalker, FileExtensionContentTypeProvider mimeDetector,
         AudioFileLoader tagLoader, IDbContextFactory<AppDbContext> dbFactory,
         FileIndexerSettings settings)
     {
+        _logger = logger;
         _fileWalker = fileWalker;
         _tagLoader = tagLoader;
         _dbFactory = dbFactory;
         _mimeDetector = mimeDetector;
         _settings = settings;
-        _stopWatch = new Stopwatch();
     }
 
     public bool IsRunning => _indexingInProgressSince != null;
@@ -70,21 +70,21 @@ public class FileIndexerService
 
     private bool UpdateFileTags(IEnumerable<IFileInfo> files, string mediaPath)
     {
+         using var operationIndexAllFiles = _logger.BeginOperation("indexing files for path: {Path}", mediaPath);
 
-        var overallCounter = 0;
+        var i = 0;
         foreach (var file in files)
         {
-            overallCounter++;
-            _stopWatch.Reset();
-            _stopWatch.Start();
-            _debugList = new List<string>();
+            i++;
             var normalizedLocation = NormalizeLocationFromPath(mediaPath, file);
             FileModel? fileRecord;
+            using var operationIndexFile = _logger.BeginOperation("indexing file number {FileNumber}: {File}", i, normalizedLocation);
+
             try
             {
                 
                 _tagLoader.Initialize(file);
-                _debugList.Add($"==> _tagLoader.Initialize: {_stopWatch.Elapsed.TotalMilliseconds}");
+                // _debugList.Add($"==> _tagLoader.Initialize: {_stopWatch.Elapsed.TotalMilliseconds}");
                 using var db = _dbFactory.CreateDbContext();
                 
                 fileRecord = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
@@ -96,7 +96,7 @@ public class FileIndexerService
                 {
                     HandleExistingFile(file, normalizedLocation, fileRecord);
                 }
-                _debugList.Add($"==> fileRecord handling: {_stopWatch.Elapsed.TotalMilliseconds}");
+                //_debugList.Add($"==> fileRecord handling: {_stopWatch.Elapsed.TotalMilliseconds}");
 
 
                 if (fileRecord.IsNew)
@@ -108,7 +108,7 @@ public class FileIndexerService
                     db.Files.Update(fileRecord);
                 }
                 
-                _debugList.Add($"==> files.Add/Update: {_stopWatch.Elapsed.TotalMilliseconds}");
+                //_debugList.Add($"==> files.Add/Update: {_stopWatch.Elapsed.TotalMilliseconds}");
 
 
                 if (fileRecord.HasChanged)
@@ -118,19 +118,22 @@ public class FileIndexerService
                 {
                     db.SaveChanges();
                 }
-                _debugList.Add($"==> files.UpdateTags: {_stopWatch.Elapsed.TotalMilliseconds} (HasChanged={fileRecord.HasChanged.ToString()}, IsNew={fileRecord.IsNew.ToString()})");
-                _debugList.Add($"==> overall count: {overallCounter}");
-                _stopWatch.Stop();
+                // _debugList.Add($"==> files.UpdateTags: {_stopWatch.Elapsed.TotalMilliseconds} (HasChanged={fileRecord.HasChanged.ToString()}, IsNew={fileRecord.IsNew.ToString()})");
+                // _debugList.Add($"==> overall count: {overallCounter}");
+                // _stopWatch.Stop();
 
-                Console.WriteLine(string.Join("\n", _debugList));
-                
+                // Console.WriteLine(string.Join("\n", _debugList));
+                operationIndexFile.Complete();
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.Message);
+                // Console.WriteLine(e.Message);
+                // op.Cancel(); // Cancel would suppress warning, so do not call it
+                _logger.Warning(e, "file {File} could not be indexed", normalizedLocation);
                 return false;
             }
         }
+        operationIndexAllFiles.Complete("files", i);
 
         return true;
     }
@@ -156,7 +159,7 @@ public class FileIndexerService
     {
         try
         {
-            _debugList.Add($"==> filesize: {file.Length * 1e-6}MB");
+            _logger.Information(" file{File} file size: {FileSize}MB", file.Name, file.Length * 1e-6);
 
             var hash = BuildFullHashAsHexString();
             var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash);
@@ -247,10 +250,7 @@ public class FileIndexerService
 
     private string BuildFullHashAsHexString()
     {
-        _debugList.Add($"==> begin hashing: {_stopWatch.Elapsed.TotalMilliseconds}");
-        var result = Convert.ToHexString(_tagLoader.BuildHash());
-        _debugList.Add($"==> finish hashing: {_stopWatch.Elapsed.TotalMilliseconds}");
-        return result;
+        return Convert.ToHexString(_tagLoader.BuildHash());
     }
 
     private FileModel CreateNewFileRecord(IFileInfo file, string normalizedLocation, string hash)
@@ -295,9 +295,10 @@ public class FileIndexerService
 
     private bool DeleteOrphanedFileTags()
     {
+        using var db = _dbFactory.CreateDbContext();
+
         try
         {
-            using var db = _dbFactory.CreateDbContext();
 
             var enabledFromDate = _indexingInProgressSince;
             // todo: sqlite does not allow query evaluation... must be client side.
@@ -326,6 +327,7 @@ public class FileIndexerService
         }
         catch (Exception e)
         {
+            _logger.Warning(e, "error while deleting orphaned files");
             return false;
         }
 

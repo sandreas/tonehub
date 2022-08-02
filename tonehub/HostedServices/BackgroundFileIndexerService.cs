@@ -49,10 +49,10 @@ public class BackgroundFileIndexerService: IHostedService, IDisposable
             _logger.Information("perform index update for path: {@MediaPath}", mediaPath);
             if(!_fileIndexer.Run(mediaPath))
             {
-                _logger.Warning("failed fileIndexer run");
+                _logger.Warning("fileIndexer run failed");
                 _timer.Change(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
             } else {
-                _logger.Information("successful fileIndexer run");
+                _logger.Information("fileIndexer run succeeded");
             }
             
             // todo: introduce a setting for rerunning a timer?! or just add filesystem watchers

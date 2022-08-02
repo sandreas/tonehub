@@ -30,6 +30,7 @@
         <PackageReference Include="Serilog.Settings.Configuration" Version="3.3.0" />
         <PackageReference Include="Serilog.Sinks.Async" Version="1.5.0" />
         <PackageReference Include="Serilog.Sinks.Console" Version="4.0.1" />
+        <PackageReference Include="SerilogTimings" Version="3.0.1" />
         <PackageReference Include="Standart.Hash.xxHash" Version="4.0.4" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="6.2.3" />
         <PackageReference Include="SixLabors.ImageSharp" Version="2.1.3" />
