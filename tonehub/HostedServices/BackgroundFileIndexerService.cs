@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using tonehub.Database;
 using tonehub.Services;
 using FileModel = tonehub.Database.Models.File;
 using ILogger = Serilog.ILogger;
@@ -10,69 +12,87 @@ public class BackgroundFileIndexerService: IHostedService, IDisposable
     private readonly DatabaseSettingsService _settings;
     private readonly FileIndexerService _fileIndexer;
     private readonly ILogger _logger;
+    private bool _indexingInProgress = false;
+    private readonly CancellationTokenSource _cts;
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
 
-    public BackgroundFileIndexerService(ILogger logger, DatabaseSettingsService settings, FileIndexerService fileIndexer)
+    public BackgroundFileIndexerService(ILogger logger, IDbContextFactory<AppDbContext> dbFactory, FileIndexerService fileIndexer)
     {
         _logger = logger;
-        _settings = settings;
+        _dbFactory = dbFactory;
         _fileIndexer = fileIndexer;
-        _timer = new Timer(PerformIndexUpdate);
+        //_timer = new Timer(PerformIndexUpdate);
+        _cts = new CancellationTokenSource();
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.Information("BackgroundFileIndexer StartAsync");
-
-        _timer.Change(TimeSpan.Zero,TimeSpan.FromMilliseconds(2000));
+        // _timer.Change(TimeSpan.Zero,TimeSpan.FromSeconds(2));
+        PerformIndexUpdate();
         return Task.CompletedTask;
     }
 
-    private void PerformIndexUpdate(object? state)
+    private void PerformIndexUpdate()
     {
-        _logger.Information("BackgroundFileIndexer PerformIndexUpdate");
         try
         {
-            if( !_settings.TryGet<string>("mediaPath", out var mediaPath) || mediaPath == null)
+            _logger.Information("BackgroundFileIndexer PerformIndexUpdate");
+
+            if(_indexingInProgress){
+                _logger.Information("Indexing is still in progress, no index update required");
+                return;
+            }
+            _indexingInProgress = true;
+
+            using var db = _dbFactory.CreateDbContext();
+
+            var sources = db.FileSources.Where(s => !s.Disabled).ToList();
+            if (!sources.Any())
             {
-                _logger.Warning("invalid media path: {@MediaPath}", mediaPath);
-                _timer.Change(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+                _logger.Information("No file sources configured or enabled - nothing to do");
                 return;
             }
             
-            if(_fileIndexer.IsRunning){
-                _logger.Information("fileIndexer is still running");
-                _timer.Change(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
-                return;
-            }
-
-            _logger.Information("perform index update for path: {@MediaPath}", mediaPath);
-            if(!_fileIndexer.Run(mediaPath))
+            foreach (var source in sources)
             {
-                _logger.Warning("fileIndexer run failed");
-                _timer.Change(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
-            } else {
-                _logger.Information("fileIndexer run succeeded");
+                _logger.Information("perform index update for source - Id={SourceId}, Location={SourceLocation}", source.Id, source.Location);
+                ;
+                if (!_fileIndexer.Run(source, _cts.Token))
+                {
+                    if(_cts.IsCancellationRequested){
+                        _logger.Information("fileIndexer run cancelled");
+                    } else {
+                        _logger.Warning("fileIndexer run failed");
+                    }
+                }
+                else
+                {
+                    _logger.Information("fileIndexer run succeeded");
+                }
             }
             
-            // todo: introduce a setting for rerunning a timer?! or just add filesystem watchers
-            _timer.Change(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
         }
-        catch(Exception e)
+        catch (Exception e)
         {
             _logger.Error(e, "error running fileIndexer");
+        }
+        finally
+        {
+            _indexingInProgress = false;
         }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.Information("BackgroundFileIndexer StopAsync");
-        _timer.Change(Timeout.Infinite, 0);
+        // _timer.Change(Timeout.Infinite, 0);
         return Task.CompletedTask;
     }
 
     public void Dispose()
     {
-        _timer.Dispose();
+        // _timer.Dispose();
     }
 }

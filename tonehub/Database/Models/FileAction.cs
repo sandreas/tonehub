@@ -4,6 +4,11 @@ using Newtonsoft.Json.Linq;
 
 namespace tonehub.Database.Models;
 
+// maybe more generic "EntityAction" with
+// - EntityName
+// - EntityId
+// - Action
+// - Context
 public class FileAction : ModelBaseDated
 {
     [StringLength(50)][Attr] public string Name { get; set; } = "";

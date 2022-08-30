@@ -39,8 +39,8 @@ public class FileIndexerService
     }
 
     public bool IsRunning => _indexingInProgressSince != null;
-    
-    public bool Run(string mediaPath)
+
+    public bool Run(FileSource source, CancellationToken cancellationToken)
     {
         try
         {
@@ -51,8 +51,9 @@ public class FileIndexerService
 
             _indexingInProgressSince = DateTimeOffset.UtcNow;
 
-            var files = _fileWalker.WalkRecursive(mediaPath).SelectFileInfo().Where(_tagLoader.Supports).ToArray();
-            if (UpdateFileTags(files, mediaPath) && DeleteOrphanedFileTags())
+            var files = _fileWalker.WalkRecursive(source.Location).SelectFileInfo().Where(_tagLoader.Supports)
+                .ToArray();
+            if (UpdateFileTags(files, source, cancellationToken) && DeleteOrphanedFileTags(cancellationToken))
             {
                 _lastSuccessfulRun = DateTimeOffset.UtcNow;
                 return true;
@@ -68,37 +69,46 @@ public class FileIndexerService
         }
     }
 
-    private bool UpdateFileTags(IEnumerable<IFileInfo> files, string mediaPath)
+    private bool UpdateFileTags(IEnumerable<IFileInfo> files, FileSource source, CancellationToken cancellationToken)
     {
-         using var operationIndexAllFiles = _logger.BeginOperation("indexing files for path: {Path}", mediaPath);
+        using var operationIndexAllFiles =
+            _logger.BeginOperation($"indexing files for source -  Id={source.Id}, Location={source.Location}");
 
         var i = 0;
         foreach (var file in files)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _logger.Information("cancellation requested: file indexer update file tags");
+                return false;
+            }
+
             i++;
-            var normalizedLocation = NormalizeLocationFromPath(mediaPath, file);
+            var normalizedLocation = NormalizeLocationFromPath(source.Location, file);
             FileModel? fileRecord;
-            using var operationIndexFile = _logger.BeginOperation("indexing file number {FileNumber}: {File}", i, normalizedLocation);
+            using var operationIndexFile =
+                _logger.BeginOperation("indexing file number {FileNumber}: {File}", i, normalizedLocation);
 
             try
             {
-                
                 _tagLoader.Initialize(file);
                 // _debugList.Add($"==> _tagLoader.Initialize: {_stopWatch.Elapsed.TotalMilliseconds}");
                 using var db = _dbFactory.CreateDbContext();
-                
-                fileRecord = db.Files.FirstOrDefault(f => f.Location == normalizedLocation);
+                db.FileSources.Attach(source);
+                fileRecord = db.Files.FirstOrDefault(f => f.Location == normalizedLocation && f.Source.Id == source.Id);
                 if (fileRecord == null)
                 {
-                    fileRecord = HandleMissingFile(db, file, normalizedLocation);
+                    fileRecord = HandleMissingFile(db, source, file, normalizedLocation);
                 }
                 else
                 {
                     HandleExistingFile(file, normalizedLocation, fileRecord);
                 }
                 //_debugList.Add($"==> fileRecord handling: {_stopWatch.Elapsed.TotalMilliseconds}");
+                // db.SaveChanges(); // remove after debugging
 
 
+                // fileRecord.Source = source;
                 if (fileRecord.IsNew)
                 {
                     db.Files.Add(fileRecord);
@@ -107,17 +117,20 @@ public class FileIndexerService
                 {
                     db.Files.Update(fileRecord);
                 }
-                
+
                 //_debugList.Add($"==> files.Add/Update: {_stopWatch.Elapsed.TotalMilliseconds}");
 
+                // db.SaveChanges(); // remove after debugging
 
                 if (fileRecord.HasChanged)
                 {
                     UpdateFileRecordTagsAndJsonValues(db, fileRecord);
-                } else
+                }
+                else
                 {
                     db.SaveChanges();
                 }
+
                 // _debugList.Add($"==> files.UpdateTags: {_stopWatch.Elapsed.TotalMilliseconds} (HasChanged={fileRecord.HasChanged.ToString()}, IsNew={fileRecord.IsNew.ToString()})");
                 // _debugList.Add($"==> overall count: {overallCounter}");
                 // _stopWatch.Stop();
@@ -133,6 +146,7 @@ public class FileIndexerService
                 return false;
             }
         }
+
         operationIndexAllFiles.Complete("files", i);
 
         return true;
@@ -155,16 +169,15 @@ public class FileIndexerService
         }
     }
 
-    private FileModel HandleMissingFile(AppDbContext db, IFileInfo file, string normalizedLocation)
+    private FileModel HandleMissingFile(AppDbContext db, FileSource source, IFileInfo file, string normalizedLocation)
     {
         try
         {
-            _logger.Information(" file{File} file size: {FileSize}MB", file.Name, file.Length * 1e-6);
-
+            _logger.Information(" file {File},  size: {FileSize}MB", file.Name, Math.Round(file.Length * 1e-6, 3));
             var hash = BuildFullHashAsHexString();
-            var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash);
+            var existingRecord = db.Files.FirstOrDefault(f => f.Hash == hash && f.Source.Id == source.Id);
             return existingRecord == null
-                ? CreateNewFileRecord(file, normalizedLocation, hash)
+                ? CreateNewFileRecord(/*db.FileSources.Find(source.Id) ?? */ source, file, normalizedLocation, hash)
                 : UpdateFileRecord(existingRecord, file, normalizedLocation, existingRecord.Hash);
         }
         catch (Exception e)
@@ -181,8 +194,8 @@ public class FileIndexerService
         var loadedRawTags = _tagLoader.LoadTags();
 
         // todo: performance improvements
-        // db.ChangeTracker.AutoDetectChangesEnabled = false;
-        
+        //db.ChangeTracker.AutoDetectChangesEnabled = false;
+
         var tagsToStore = loadedRawTags.Select(t => new FileTag()
         {
             Namespace = t.Namespace,
@@ -190,7 +203,7 @@ public class FileIndexerService
             File = fileRecord,
             Tag = FindOrCreateTag(db, t.Value)
         });
-       
+
         foreach (var t in tagsToStore)
         {
             fileRecord.FileTags.Add(t);
@@ -212,10 +225,10 @@ public class FileIndexerService
         {
             fileRecord.FileJsonValues.Add(t);
         }
-        
+
         // todo performance improvements
-        // db.ChangeTracker.AutoDetectChangesEnabled = false;
-        
+        //db.ChangeTracker.AutoDetectChangesEnabled = false;
+
         db.SaveChanges();
     }
 
@@ -223,7 +236,7 @@ public class FileIndexerService
     private static Tag FindOrCreateTag(AppDbContext db, string tagValue)
     {
         // _logger.Information("Adding tag {TagValue}", tagValue.ToString());
-
+        db.SaveChanges();
         var existing = db.Tags.FirstOrDefault(t =>
             tagValue.Equals(t.Value)
         );
@@ -253,10 +266,11 @@ public class FileIndexerService
         return Convert.ToHexString(_tagLoader.BuildHash());
     }
 
-    private FileModel CreateNewFileRecord(IFileInfo file, string normalizedLocation, string hash)
+    private FileModel CreateNewFileRecord(FileSource source, IFileInfo file, string normalizedLocation, string hash)
     {
         var newFileRecord = new FileModel
         {
+            Source = source,
             IsNew = true,
             GlobalFilterType = _tagLoader.LoadGlobalFilterType()
         };
@@ -293,13 +307,12 @@ public class FileIndexerService
         return relPath.Replace(Path.DirectorySeparatorChar, '/').TrimStart('/');
     }
 
-    private bool DeleteOrphanedFileTags()
+    private bool DeleteOrphanedFileTags(CancellationToken cancellationToken)
     {
         using var db = _dbFactory.CreateDbContext();
 
         try
         {
-
             var enabledFromDate = _indexingInProgressSince;
             // todo: sqlite does not allow query evaluation... must be client side.
             var disableFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < enabledFromDate).ToList();
@@ -319,10 +332,20 @@ public class FileIndexerService
             }
 
             db.RemoveRange(deleteFiles);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _logger.Information("cancellation requested: deleting orphaned files (entities)");
+            }
+
             db.SaveChanges();
 
             var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
             db.Tags.RemoveRange(orphanTags);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _logger.Information("cancellation requested: deleting orphaned files (tags)");
+            }
+
             db.SaveChanges();
         }
         catch (Exception e)

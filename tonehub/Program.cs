@@ -108,16 +108,17 @@ try
     builder.Services.AddHostedService<BackgroundFileIndexerService>();
 
     app = builder.Build();
-    
-    // Write streamlined request completion events, instead of the more verbose ones from the framework.
-    // To use the default framework request logging instead, remove this line and set the "Microsoft"
-    // level in appsettings.json to "Information".
-    app.UseSerilogRequestLogging();
     var contextFactory = app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>();
     await using (var db = await contextFactory.CreateDbContextAsync())
     {
         db.Database.Migrate();
     }
+    
+    // Write streamlined request completion events, instead of the more verbose ones from the framework.
+    // To use the default framework request logging instead, remove this line and set the "Microsoft"
+    // level in appsettings.json to "Information".
+    app.UseSerilogRequestLogging();
+
 
     // Configure the HTTP request pipeline.
     if (app.Environment.IsDevelopment())
@@ -127,7 +128,9 @@ try
     }
 
     app.UseHttpsRedirection();
-
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+    
     app.UseAuthorization();
 
 

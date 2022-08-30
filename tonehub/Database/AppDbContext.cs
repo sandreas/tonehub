@@ -10,11 +10,12 @@ public class AppDbContext : DbContext
     // disable non nullable warning (I did not find a way to overcome this build warning)
 #pragma warning disable 8618
 
+    public DbSet<Setting> Settings { get; set; }
     public DbSet<FileAction> FileActions { get; set; }
     public DbSet<FileJsonValue> FileJsonValues { get; set; }
+    public DbSet<FileSource> FileSources { get; set; }
     public DbSet<Models.File> Files { get; set; }
     public DbSet<FileTag> FileTags { get; set; }
-    public DbSet<Setting> Settings { get; set; }
     public DbSet<SmartFileList> SmartFileLists { get; set; }
     public DbSet<StaticFileList> StaticFileLists { get; set; }
     public DbSet<Tag> Tags { get; set; }

@@ -22,6 +22,8 @@ public class File : ModelBaseDatedDisabled
     [Attr] public DateTimeOffset ModifiedDate { get; set; }
     [Attr] public DateTimeOffset LastCheckDate { get; set; }
 
+    [HasOne] public FileSource Source { get; set; }
+
     [HasMany] public virtual ICollection<FileTag> FileTags { get; set; } = new List<FileTag>();
     [HasMany] public virtual ICollection<FileJsonValue> FileJsonValues { get; set; } = new List<FileJsonValue>();
         

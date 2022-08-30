@@ -8,6 +8,7 @@ namespace tonehub.Metadata;
 
 public class AudioFileLoader : FileLoaderBase
 {
+    private readonly string[] _supportedExtensions = { "m4b", "mp3" };
 
     public static readonly MetadataProperty[] JsonProperties =
     {
@@ -19,7 +20,7 @@ public class AudioFileLoader : FileLoaderBase
         MetadataProperty.AdditionalFields
     };
 
-    private MetadataTrack _track = null!;
+    private Lazy<MetadataTrack> _track = null!;
     private IFileInfo _file = null!;
     private readonly long _maxHashBytes;
 
@@ -38,16 +39,16 @@ public class AudioFileLoader : FileLoaderBase
     public override void Initialize(IFileInfo file)
     {
         _file = file;
-        _track = new MetadataTrack(file);
+        _track = new Lazy<MetadataTrack>(() => new MetadataTrack(file));
     }
 
     public override GlobalFilterType LoadGlobalFilterType(){
-        if (_track.ItunesMediaType == null)
+        if (_track.Value.ItunesMediaType == null)
         {
             return GlobalFilterType.Unspecified;
         }
 
-        var intMediaType = (int)_track.ItunesMediaType;
+        var intMediaType = (int)_track.Value.ItunesMediaType;
         if (Enum.IsDefined(typeof(GlobalFilterType), intMediaType))
         {
             return (GlobalFilterType)intMediaType;
@@ -59,12 +60,12 @@ public class AudioFileLoader : FileLoaderBase
     
     public override IEnumerable<(string Namespace, uint Type, string Value)> LoadTags()
     {
-        // maybe _track.GetMetadataPropertyType(p).IsValueType?
+        // maybe _track.Value.GetMetadataPropertyType(p).IsValueType?
         // skip Chapters, EmbeddedPictures, AdditionalFields
         var stringConvertibleProperties = MetadataExtensions.MetadataProperties.Where(p => !JsonProperties.Contains(p));
         foreach (var p in stringConvertibleProperties)
         {
-            var value = _track.GetMetadataPropertyValue(p);
+            var value = _track.Value.GetMetadataPropertyValue(p);
             
             if(MetadataExtensions.IsEmpty(value))            {
                 continue;
@@ -84,26 +85,26 @@ public class AudioFileLoader : FileLoaderBase
             yield return (Namespace, (uint)p, stringValue);
         }
         // todo: add tag for picture count?
-        // if(_track.EmbeddedPictures.Count > 0)
+        // if(_track.Value.EmbeddedPictures.Count > 0)
     }
 
     public override IEnumerable<(string Namespace, uint Type, JToken Value)> LoadJsonValues()
     {
-        var unmappedAdditionalFields =_track.AdditionalFields.Where(kvp => !_track.MappedAdditionalFields.ContainsKey(kvp.Key)).ToDictionary(kvp=>kvp.Key, kvp => kvp.Value);
+        var unmappedAdditionalFields =_track.Value.AdditionalFields.Where(kvp => !_track.Value.MappedAdditionalFields.ContainsKey(kvp.Key)).ToDictionary(kvp=>kvp.Key, kvp => kvp.Value);
         if (unmappedAdditionalFields.Count > 0)
         {
             yield return (Namespace, (uint)MetadataProperty.AdditionalFields, JObject.FromObject(unmappedAdditionalFields));
         }
 
         
-        if(_track.LongDescription?.Length > 0){
-            yield return (Namespace, (uint)MetadataProperty.LongDescription, new JValue(_track.LongDescription));
+        if(_track.Value.LongDescription?.Length > 0){
+            yield return (Namespace, (uint)MetadataProperty.LongDescription, new JValue(_track.Value.LongDescription));
         }
         
-        if (_track.Chapters.Count > 0)
+        if (_track.Value.Chapters.Count > 0)
         {
             // todo: find better represenation of chapters and lyrics
-            yield return (Namespace,(uint)MetadataProperty.Chapters, JArray.FromObject(_track.Chapters.Select(c =>
+            yield return (Namespace,(uint)MetadataProperty.Chapters, JArray.FromObject(_track.Value.Chapters.Select(c =>
                     JObject.FromObject(new
                     {
                         start = c.StartTime,
@@ -117,8 +118,8 @@ public class AudioFileLoader : FileLoaderBase
     
     public override byte[] BuildHash()
     {
-        var (offset, length) = CalculateMidpointOffsetLength(_track.TechnicalInformation.AudioDataOffset,
-            _track.TechnicalInformation.AudioDataSize, _maxHashBytes);
+        var (offset, length) = CalculateMidpointOffsetLength(_track.Value.TechnicalInformation.AudioDataOffset,
+            _track.Value.TechnicalInformation.AudioDataSize, _maxHashBytes);
         using var fileStream = _file.OpenRead();
         using var input = new StreamLimiter(fileStream, offset, length);
         return HashFunction(input);
@@ -133,6 +134,6 @@ public class AudioFileLoader : FileLoaderBase
 
     public override bool Supports(IFileInfo file)
     {
-        return file.Extension == ".m4b";
+        return _supportedExtensions.Contains(file.Extension.TrimStart('.').ToLowerInvariant());
     }
 }
