@@ -7,7 +7,7 @@ namespace tonehub.Controllers;
 
 public class SmartFileListsController: JsonApiQueryController<SmartFileList, Guid>
 {
-    public SmartFileListsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceService<SmartFileList, Guid> resourceService,
+    public SmartFileListsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceQueryService<SmartFileList, Guid> resourceService,
         ILoggerFactory loggerFactory)
         : base(options, resourceGraph, loggerFactory, resourceService)
     {

@@ -7,7 +7,7 @@ namespace tonehub.Controllers;
 
 public class TagsController: JsonApiQueryController<Tag, Guid>
 {
-    public TagsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceService<Tag, Guid> resourceService,
+    public TagsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceQueryService<Tag, Guid> resourceService,
         ILoggerFactory loggerFactory)
         : base(options, resourceGraph, loggerFactory, resourceService)
     {

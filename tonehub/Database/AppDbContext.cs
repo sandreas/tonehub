@@ -11,7 +11,7 @@ public class AppDbContext : DbContext
 #pragma warning disable 8618
 
     public DbSet<Setting> Settings { get; set; }
-    public DbSet<FileAction> FileActions { get; set; }
+    public DbSet<DataItem> DataItems { get; set; }
     public DbSet<FileJsonValue> FileJsonValues { get; set; }
     public DbSet<FileSource> FileSources { get; set; }
     public DbSet<Models.File> Files { get; set; }
@@ -31,7 +31,7 @@ public class AppDbContext : DbContext
     {
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<FileJsonValue, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<Setting, JToken>(vsi => vsi.Value));
-        modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<FileAction, JToken>(vsi => vsi.Context));
+        modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<DataItem, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<SmartFileList, JToken>(vsi => vsi.Query));
         
         // does not work with sqlite

@@ -5,9 +5,9 @@ using tonehub.Database.Models;
 
 namespace tonehub.Controllers;
 
-public class FileActionsController: JsonApiQueryController<FileAction, Guid>
+public class DataItemsController: JsonApiQueryController<DataItem, Guid>
 {
-    public FileActionsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceService<FileAction, Guid> resourceService,
+    public DataItemsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceQueryService<DataItem, Guid> resourceService,
         ILoggerFactory loggerFactory)
         : base(options, resourceGraph, loggerFactory, resourceService)
     {

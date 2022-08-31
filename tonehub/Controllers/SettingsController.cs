@@ -7,7 +7,7 @@ namespace tonehub.Controllers;
 
 public class SettingsController: JsonApiQueryController<Setting, Guid>
 {
-    public SettingsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceService<Setting, Guid> resourceService,
+    public SettingsController(IJsonApiOptions options, IResourceGraph resourceGraph, IResourceQueryService<Setting, Guid> resourceService,
         ILoggerFactory loggerFactory)
         : base(options, resourceGraph, loggerFactory, resourceService)
     {
