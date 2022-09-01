@@ -53,7 +53,7 @@ public class FileIndexerService
 
             var files = _fileWalker.WalkRecursive(source.Location).SelectFileInfo().Where(_tagLoader.Supports)
                 .ToArray();
-            if (UpdateFileTags(files, source, cancellationToken) && DeleteOrphanedFileTags(cancellationToken))
+            if (UpdateFileTags(files, source, cancellationToken) && DeleteOrphanedFileTags(source, cancellationToken))
             {
                 _lastSuccessfulRun = DateTimeOffset.UtcNow;
                 return true;
@@ -91,7 +91,10 @@ public class FileIndexerService
 
             try
             {
+
                 _tagLoader.Initialize(file);
+
+                using var operationHandle = _logger.BeginOperation("- handle file");
                 // _debugList.Add($"==> _tagLoader.Initialize: {_stopWatch.Elapsed.TotalMilliseconds}");
                 using var db = _dbFactory.CreateDbContext();
                 db.FileSources.Attach(source);
@@ -104,9 +107,12 @@ public class FileIndexerService
                 {
                     HandleExistingFile(file, normalizedLocation, fileRecord);
                 }
-                //_debugList.Add($"==> fileRecord handling: {_stopWatch.Elapsed.TotalMilliseconds}");
-                // db.SaveChanges(); // remove after debugging
 
+                operationHandle.Complete();
+
+                //_debugList.Add($"==> fileRecord handling: {_stopWatch.Elapsed.TotalMilliseconds}");
+
+                using var operationSave = _logger.BeginOperation("- save changes");
 
                 // fileRecord.Source = source;
                 if (fileRecord.IsNew)
@@ -120,7 +126,6 @@ public class FileIndexerService
 
                 //_debugList.Add($"==> files.Add/Update: {_stopWatch.Elapsed.TotalMilliseconds}");
 
-                // db.SaveChanges(); // remove after debugging
 
                 if (fileRecord.HasChanged)
                 {
@@ -128,8 +133,13 @@ public class FileIndexerService
                 }
                 else
                 {
-                    db.SaveChanges();
+                    db.SaveChanges(); // here is the problem (allocation)
                 }
+
+                
+                db.Dispose();
+
+                operationSave.Complete();
 
                 // _debugList.Add($"==> files.UpdateTags: {_stopWatch.Elapsed.TotalMilliseconds} (HasChanged={fileRecord.HasChanged.ToString()}, IsNew={fileRecord.IsNew.ToString()})");
                 // _debugList.Add($"==> overall count: {overallCounter}");
@@ -146,6 +156,7 @@ public class FileIndexerService
                 return false;
             }
         }
+
 
         operationIndexAllFiles.Complete("files", i);
 
@@ -194,7 +205,7 @@ public class FileIndexerService
         var loadedRawTags = _tagLoader.LoadTags();
 
         // todo: performance improvements
-        //db.ChangeTracker.AutoDetectChangesEnabled = false;
+        db.ChangeTracker.AutoDetectChangesEnabled = false;
 
         var tagsToStore = loadedRawTags.Select(t => new FileTag()
         {
@@ -227,7 +238,7 @@ public class FileIndexerService
         }
 
         // todo performance improvements
-        //db.ChangeTracker.AutoDetectChangesEnabled = false;
+        db.ChangeTracker.AutoDetectChangesEnabled = false;
 
         db.SaveChanges();
     }
@@ -236,7 +247,6 @@ public class FileIndexerService
     private static Tag FindOrCreateTag(AppDbContext db, string tagValue)
     {
         // _logger.Information("Adding tag {TagValue}", tagValue.ToString());
-        db.SaveChanges();
         var existing = db.Tags.FirstOrDefault(t =>
             tagValue.Equals(t.Value)
         );
@@ -307,7 +317,7 @@ public class FileIndexerService
         return relPath.Replace(Path.DirectorySeparatorChar, '/').TrimStart('/');
     }
 
-    private bool DeleteOrphanedFileTags(CancellationToken cancellationToken)
+    private bool DeleteOrphanedFileTags(FileSource source, CancellationToken cancellationToken)
     {
         using var db = _dbFactory.CreateDbContext();
 
@@ -315,7 +325,7 @@ public class FileIndexerService
         {
             var enabledFromDate = _indexingInProgressSince;
             // todo: sqlite does not allow query evaluation... must be client side.
-            var disableFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < enabledFromDate).ToList();
+            var disableFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < enabledFromDate && f.Source == source).ToList();
             foreach (var fileRecord in disableFiles)
             {
                 fileRecord.Disabled = true;
@@ -324,19 +334,12 @@ public class FileIndexerService
             db.Files.UpdateRange(disableFiles);
 
             var keepFromDate = _indexingInProgressSince?.Subtract(_settings.DeleteOrphansAfter) ?? DateTime.MinValue;
-            var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < keepFromDate).ToList();
-            foreach (var fileRecord in deleteFiles)
-            {
-                db.FileTags.RemoveRange(fileRecord.FileTags);
-                db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
-            }
-
-            db.RemoveRange(deleteFiles);
+            var deleteFiles = db.Files.AsEnumerable().Where(f => f.LastCheckDate < keepFromDate && f.Source == source).ToList();
+            _deleteFiles(db, deleteFiles);
             if (cancellationToken.IsCancellationRequested)
             {
                 _logger.Information("cancellation requested: deleting orphaned files (entities)");
             }
-
             db.SaveChanges();
 
             var orphanTags = db.Tags.Where(t => t.FileTags.Count == 0);
@@ -357,6 +360,19 @@ public class FileIndexerService
         return true;
     }
 
+    private void _deleteFiles(AppDbContext db, List<FileModel> deleteFiles)
+    {
+        foreach (var fileRecord in deleteFiles)
+        {
+            db.FileTags.RemoveRange(fileRecord.FileTags);
+            db.FileJsonValues.RemoveRange(fileRecord.FileJsonValues);
+        }
+
+        db.RemoveRange(deleteFiles);
+    }
+
+    
+    
 
     private bool TryLoadFileMimeType(string path, out MimeType mimeType)
     {
