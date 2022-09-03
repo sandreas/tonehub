@@ -43,8 +43,8 @@ public class AppDbContext : DbContext
     public override int SaveChanges()
     {
         var now = DateTimeOffset.UtcNow;
-
-        foreach (var changedEntity in ChangeTracker.Entries())
+        var changedEntities = ChangeTracker.Entries().ToList();
+        foreach (var changedEntity in changedEntities)
         {
             if (changedEntity.Entity is ModelBaseDated entity)
             {
@@ -58,10 +58,51 @@ public class AppDbContext : DbContext
                         entity.UpdatedDate = now;
                         break;
                 }
+                
             }
+            
         }
-
+        
         return base.SaveChanges();
+        /*
+        // this does not seem to help
+        var result = base.SaveChanges();
+        foreach (var entityEntry in ChangeTracker.Entries())
+        {
+            entityEntry.State = EntityState.Detached;
+        }
+        GC.Collect();
+        return result;
+        */
+    }
+    
+    /*
+    // https://stackoverflow.com/questions/30209528/memory-leak-when-using-entity-framework
+    // does not work
+    */
+    
+    public void Detach(object entity) 
+    {
+        
+    
+    }
+    
+    public override void Dispose()
+    {
+        
+        var changedEntities = ChangeTracker.Entries().ToList();
+        var count = changedEntities.Count();
+        /*foreach (var entityEntry in changedEntities)
+        {
+            entityEntry.State = EntityState.Detached;
+        }
+        */
+        ChangeTracker.Clear();
+        base.Dispose();
+        GC.Collect();
+
 
     }
+    
+    
 }

@@ -68,9 +68,12 @@ public class FileIndexerService
             }
 
             i++;
+            
             var normalizedLocation = NormalizeLocationFromPath(source.Location, file);
             using var operationIndexFile =
                 _logger.BeginOperation("indexing file number {FileNumber}: {File}", i, normalizedLocation);
+
+            using var db = _dbFactory.CreateDbContext();
 
             try
             {
@@ -78,7 +81,6 @@ public class FileIndexerService
 
                 using var operationHandle = _logger.BeginOperation("- handle file");
                 // _debugList.Add($"==> _tagLoader.Initialize: {_stopWatch.Elapsed.TotalMilliseconds}");
-                using var db = _dbFactory.CreateDbContext();
                 db.FileSources.Attach(source);
                 var fileRecord =
                     db.Files.FirstOrDefault(f => f.Location == normalizedLocation && f.Source.Id == source.Id);
@@ -109,12 +111,10 @@ public class FileIndexerService
                 {
                     UpdateFileRecordTagsAndJsonValues(db, fileRecord);
                 }
-                else
-                {
-                    db.SaveChanges(); // here is the problem (allocation)
-                }
+                
+                db.SaveChanges(); // here is the problem (allocation)
 
-                db.Dispose();
+                // db.Dispose();
                 operationSave.Complete();
                 operationIndexFile.Complete();
             }
@@ -124,6 +124,16 @@ public class FileIndexerService
                 // op.Cancel(); // Cancel would suppress warning, so do not call it
                 _logger.Warning(e, "file {File} could not be indexed", normalizedLocation);
                 return false;
+            } finally {
+                /*
+                foreach (var entityEntry in db.ChangeTracker.Entries())
+                {
+                    entityEntry.State = EntityState.Detached;
+                }
+                */
+                // db.Dispose(); // overriding and calling manually fails
+                // GC.Collect();
+
             }
         }
 
@@ -172,6 +182,7 @@ public class FileIndexerService
     {
         fileRecord.FileTags = fileRecord.FileTags.Where(t => t.Type < IFileLoader.CustomTagTypeStart).ToList();
 
+        // dbtodo: remove db parameter to prevent memory leak?
         var loadedRawTags = _tagLoader.LoadTags().Select(t =>
         {
             t.Value = ShortenOverlongTagValue(t.Value);
@@ -179,7 +190,7 @@ public class FileIndexerService
         });
 
         // todo: performance improvements
-        db.ChangeTracker.AutoDetectChangesEnabled = false;
+        // db.ChangeTracker.AutoDetectChangesEnabled = false;
 
         var tagsToStore = loadedRawTags.Select(t => new FileTag()
         {
@@ -212,9 +223,7 @@ public class FileIndexerService
         }
 
         // todo performance improvements
-        db.ChangeTracker.AutoDetectChangesEnabled = false;
-
-        db.SaveChanges();
+        // db.ChangeTracker.AutoDetectChangesEnabled = false;
     }
 
 
@@ -382,5 +391,6 @@ public class FileIndexerService
 
     public void CleanUp(List<FileSource> dbSources)
     {
+        // _deleteFiles();
     }
 }

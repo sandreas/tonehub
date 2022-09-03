@@ -10,6 +10,7 @@ using Serilog;
 using Serilog.Core;
 using tonehub.Database;
 using tonehub.HostedServices;
+using tonehub.HostedServices.Scoped;
 using tonehub.Metadata;
 using tonehub.Options;
 using tonehub.Services;
@@ -105,7 +106,9 @@ try
     builder.Services.AddSwaggerGen();
 
     // background services, e.g. FileIndexer
-    builder.Services.AddHostedService<BackgroundFileIndexerService>();
+    // builder.Services.AddHostedService<BackgroundFileIndexerService>();
+    builder.Services.AddHostedService<ConsumeScopedFileIndexerServiceHostedService>();
+    builder.Services.AddScoped<IScopedFileIndexerService, ScopedFileIndexerService>();
 
     app = builder.Build();
     var contextFactory = app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>();
