@@ -172,7 +172,11 @@ public class FileIndexerService
     {
         fileRecord.FileTags = fileRecord.FileTags.Where(t => t.Type < IFileLoader.CustomTagTypeStart).ToList();
 
-        var loadedRawTags = _tagLoader.LoadTags();
+        var loadedRawTags = _tagLoader.LoadTags().Select(t =>
+        {
+            t.Value = ShortenOverlongTagValue(t.Value);
+            return t;
+        });
 
         // todo: performance improvements
         db.ChangeTracker.AutoDetectChangesEnabled = false;
@@ -214,6 +218,16 @@ public class FileIndexerService
     }
 
 
+    private static string ShortenOverlongTagValue(string tagValue) {
+        // limit value bytes to 2500 (due to some indexes like pgsql supporting only 2704 bytes)
+        while (Encoding.UTF8.GetByteCount(tagValue) > 2500)
+        {
+            tagValue = tagValue.Substring(0, tagValue.Length - 1);
+        }
+
+        return tagValue;
+    }
+    
     private static Tag FindOrCreateTag(AppDbContext db, string tagValue)
     {
         // _logger.Information("Adding tag {TagValue}", tagValue.ToString());
@@ -224,12 +238,6 @@ public class FileIndexerService
         {
             // _logger.Information("Already exists");
             return existing;
-        }
-
-        // limit value bytes to 2500 (due to some indexes like pgsql supporting only 2704 bytes)
-        while (Encoding.UTF8.GetByteCount(tagValue) > 2500)
-        {
-            tagValue = tagValue.Substring(0, tagValue.Length - 1);
         }
 
         var newTag = new Tag()
