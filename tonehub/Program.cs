@@ -4,6 +4,7 @@ using System.Reflection;
 using JsonApiDotNetCore.Configuration;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
 using Sandreas.Files;
 using Serilog;
@@ -35,10 +36,10 @@ try
     // configure and override defaults with extensive logging (see https://gist.github.com/Alger23/bb848e902a5347d072d9853f79475159)
     builder.Host.UseSerilog((context, services, loggerConfiguration) =>
     {
-
         loggerConfiguration
             .ReadFrom.Configuration(context.Configuration)
-            .ReadFrom.Services(services) // see https://github.com/serilog/serilog-aspnetcore#injecting-services-into-enrichers-and-sinks
+            .ReadFrom
+            .Services(services) // see https://github.com/serilog/serilog-aspnetcore#injecting-services-into-enrichers-and-sinks
             // via appsettings.json
             // .Enrich.FromLogContext()
             // .Enrich.WithExceptionDetails()
@@ -55,7 +56,7 @@ try
         loggerConfiguration.Enrich.WithProperty("DebuggerAttached", Debugger.IsAttached);
 #endif
     });
-    
+
 
     // https://docs.microsoft.com/de-de/aspnet/core/fundamentals/configuration/?view=aspnetcore-6.0
     // ToneHub__DatabaseUri
@@ -63,19 +64,39 @@ try
     builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
         {
             var settings = services.GetRequiredService<IOptions<ToneHubOptions>>();
-            
+
             var connectionString = Utility.UriToConnectionString(settings.Value.DatabaseUri);
-            switch(settings.Value.DatabaseUri.Scheme){
+            switch (settings.Value.DatabaseUri.Scheme)
+            {
                 case "sqlite":
                     options.UseSqlite(connectionString);
                     break;
                 case "pgsql":
-                    options.UseNpgsql(connectionString);
+                    options.UseNpgsql(connectionString, o =>
+                    {
+                        o.EnableRetryOnFailure(maxRetryCount: 4, maxRetryDelay: TimeSpan.FromSeconds(1),
+                            errorCodesToAdd: Array.Empty<string>());
+                    });
+                    // same like AsNoTracking() but by default (see https://docs.microsoft.com/en-us/ef/core/querying/tracking#configuring-the-default-tracking-behavior)
+                    // options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+                    if (builder.Environment.IsDevelopment())
+                    {
+                        options.EnableDetailedErrors();
+                        options.EnableSensitiveDataLogging();
+                        options.ConfigureWarnings(warningsActions =>
+                        {
+                            warningsActions.Log(new EventId[]
+                            {
+                                CoreEventId.FirstWithoutOrderByAndFilterWarning,
+                                CoreEventId.RowLimitingOperationWithoutOrderByWarning
+                            });
+                        });
+                    }
+
                     // https://stackoverflow.com/questions/69961449/net6-and-datetime-problem-cannot-write-datetime-with-kind-utc-to-postgresql-ty/70142836#70142836
                     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
                     break;
             }
-            
         }
     );
     // Add services to the container.
@@ -116,7 +137,7 @@ try
     {
         db.Database.Migrate();
     }
-    
+
     // Write streamlined request completion events, instead of the more verbose ones from the framework.
     // To use the default framework request logging instead, remove this line and set the "Microsoft"
     // level in appsettings.json to "Information".
@@ -124,7 +145,7 @@ try
 
 
     // Configure the HTTP request pipeline.
-    
+
     if (app.Environment.IsDevelopment())
     {
         app.UseSwagger();
@@ -138,7 +159,7 @@ try
     app.UseHttpsRedirection();
     app.UseDefaultFiles();
     app.UseStaticFiles();
-    
+
     app.UseAuthorization();
 
 
@@ -177,24 +198,23 @@ try
         }
     }
     */
-        
 }
 catch (Exception ex)
 {
     if (Log.Logger == null || Log.Logger == Logger.None)
     {
         var loggerConfig = new LoggerConfiguration();
-        loggerConfig = app != null ? loggerConfig.ReadFrom.Configuration(app.Configuration) : loggerConfig.MinimumLevel.Debug(); 
+        loggerConfig = app != null
+            ? loggerConfig.ReadFrom.Configuration(app.Configuration)
+            : loggerConfig.MinimumLevel.Debug();
         Log.Logger = loggerConfig
             .WriteTo.Console()
             .CreateLogger();
     }
-    
+
     Log.Fatal(ex, "host terminated due to uncaught exception");
 }
 finally
 {
     Log.CloseAndFlush();
 }
-
-

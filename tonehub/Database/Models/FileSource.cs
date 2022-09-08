@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using JsonApiDotNetCore.Resources.Annotations;
 using tonehub.Metadata;
 
@@ -11,4 +12,5 @@ public class FileSource : ModelBaseDatedDisabled
     [StringLength(4096)][Attr] public string Location { get; set; } = "";
     [HasMany] public virtual ICollection<File> Files { get; set; } = new Collection<File>();
 
+    [NotMapped] public CancellationTokenSource Cts { get; set; } = new();
 }

@@ -48,4 +48,8 @@
       <Compile Remove="Metadata\FileLoaderFactory.cs" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Content Include=".docker\postgres\Dockerfile" />
+    </ItemGroup>
+
 </Project>
