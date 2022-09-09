@@ -6,21 +6,23 @@ using tonehub.Metadata;
 
 namespace tonehub.Services.FileIndexer;
 
-public class FileWatcher
+public class FileWatcher<T>
 {
     private CancellationTokenSource _cts;
     private readonly FileWalker _fw;
     public readonly string Location;
-    private readonly IFileLoader _tagLoader;
+    private readonly Func<IFileInfo,bool>  _whereFilterFunc;
 
     private readonly BufferBlock<IFileInfo> _queue = new();
+    private readonly Func<IEnumerable<T>, Task> _processAction;
 
-    public FileWatcher(FileWalker fw, IFileLoader tagLoader, string location)
+    public FileWatcher(FileWalker fw, string location, Func<IEnumerable<T>, Task> processAction, Func<IFileInfo, bool> whereFilterFunc)
     {
         _cts = new CancellationTokenSource();
         _fw = fw;
-        _tagLoader = tagLoader;
         Location = location;
+        _processAction = processAction;
+        _whereFilterFunc = whereFilterFunc;
     }
 
     public void Start()
@@ -36,7 +38,7 @@ public class FileWatcher
     }
     private Task ProduceFiles()
     {
-        var files = _fw.WalkRecursive(Location).SelectFileInfo().Where(_tagLoader.Supports);
+        var files = _fw.WalkRecursive(Location).SelectFileInfo().Where(_whereFilterFunc);
         foreach (var file in files)
         {
             _queue.Post(file);
@@ -51,14 +53,8 @@ public class FileWatcher
         {
             if (_queue.TryReceiveAll(out var items))
             {
-                _processFiles(items);
+                await _processAction.Invoke((IEnumerable<T>)items);
             }
         }
     }
-
-    private void _processFiles(IList<IFileInfo> items)
-    {
-        
-    }
-
 }

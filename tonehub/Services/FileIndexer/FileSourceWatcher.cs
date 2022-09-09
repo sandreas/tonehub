@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.IO.Abstractions;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Sandreas.Files;
 using tonehub.Database;
@@ -10,18 +12,20 @@ namespace tonehub.Services.FileIndexer;
 public class FileSourceWatcher
 {
     private Collection<FileSource> _currentSources = new();
-    private readonly Collection<FileWatcher> _fileWatchers = new();
+    private readonly Collection<FileWatcher<IFileInfo>> _fileWatchers = new();
     private readonly ILogger _logger;
     private readonly AppDbContext _db;
     private readonly FileWalker _fw;
     private readonly IFileLoader _tagLoader;
+    private readonly FileExtensionContentTypeProvider _mimeDetector;
 
-    public FileSourceWatcher(ILogger logger, AppDbContext db, FileWalker fw, IFileLoader tagLoader)
+    public FileSourceWatcher(ILogger logger, AppDbContext db, FileWalker fw, IFileLoader tagLoader,  FileExtensionContentTypeProvider mimeDetector)
     {
         _logger = logger;
         _db = db;
         _fw = fw;
         _tagLoader = tagLoader;
+        _mimeDetector = mimeDetector;
     }
 
     public async Task Start(CancellationToken stoppingToken)
@@ -29,12 +33,6 @@ public class FileSourceWatcher
         while (!stoppingToken.IsCancellationRequested)
         {
             await _updateFileWatchers();
-            
-            /*
-             *
-             * 
-             */
-            
             Thread.Sleep(30000);
         }
     }
@@ -52,12 +50,9 @@ public class FileSourceWatcher
             _fileWatchers.Remove(fw);
         }
         
-        
-
         var needsInsert = inserted.Concat(updated);
         var fileWatchersToInsert = needsInsert.Select(_createFileWatcher);
-
-
+        
         foreach (var fw in fileWatchersToInsert)
         {
             fw.Start();
@@ -71,9 +66,14 @@ public class FileSourceWatcher
         }
     }
 
-    private FileWatcher _createFileWatcher(FileSource source)
+    private FileWatcher<IFileInfo> _createFileWatcher(FileSource source)
     {
-        return new FileWatcher(_fw, _tagLoader, source.Location);
+        
+        return new FileWatcher<IFileInfo>(_fw, source.Location, async (items) =>
+        {
+            var dbUpdter = new FileDatabaseUpdater(_db, _tagLoader, _mimeDetector);
+            await dbUpdter.ProcessBatchAsync(source.Id, items);
+        }, _tagLoader.Supports);
     }
 
     private async Task<(
