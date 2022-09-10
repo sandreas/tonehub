@@ -6,34 +6,37 @@ using Sandreas.Files;
 using tonehub.Database;
 using tonehub.Database.Models;
 using tonehub.Metadata;
+using ILogger = Serilog.ILogger;
+
 
 namespace tonehub.Services.FileIndexer;
 
 public class FileSourceWatcher
 {
     private Collection<FileSource> _currentSources = new();
-    private readonly Collection<FileWatcher<IFileInfo>> _fileWatchers = new();
+    private readonly Collection<FileWatcher> _fileWatchers = new();
     private readonly ILogger _logger;
-    private readonly AppDbContext _db;
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly FileWalker _fw;
     private readonly IFileLoader _tagLoader;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
 
-    public FileSourceWatcher(ILogger logger, AppDbContext db, FileWalker fw, IFileLoader tagLoader,  FileExtensionContentTypeProvider mimeDetector)
+    public FileSourceWatcher(ILogger logger, IDbContextFactory<AppDbContext> dbFactory, FileWalker fw, AudioFileLoader tagLoader,  FileExtensionContentTypeProvider mimeDetector)
     {
         _logger = logger;
-        _db = db;
+        _dbFactory = dbFactory;
         _fw = fw;
         _tagLoader = tagLoader;
         _mimeDetector = mimeDetector;
     }
 
-    public async Task Start(CancellationToken stoppingToken)
+    public async Task StartAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             await _updateFileWatchers();
-            Thread.Sleep(30000);
+            // await _processNextBatch();
+            await Task.Delay(30000, stoppingToken);
         }
     }
 
@@ -50,29 +53,39 @@ public class FileSourceWatcher
             _fileWatchers.Remove(fw);
         }
         
-        var needsInsert = inserted.Concat(updated);
-        var fileWatchersToInsert = needsInsert.Select(_createFileWatcher);
-        
-        foreach (var fw in fileWatchersToInsert)
-        {
-            fw.Start();
-            _fileWatchers.Add(fw);
-        }
-
         _currentSources.Clear();
         foreach (var a in all)
         {
             _currentSources.Add(a);
         }
+        
+        var needsInsert = inserted.Concat(updated);
+        var fileWatchersToInsert = needsInsert.Select(_createFileWatcher);
+        
+        foreach (var fw in fileWatchersToInsert)
+        {
+            
+            // todo:
+            // - start file watcher
+            // - fullIndexOnce
+            // - await ProcessNextBatch => only one db task at a time
+            
+            await fw.StartAsync();
+            _fileWatchers.Add(fw);
+        }
+
+        // todo: 
+
     }
 
-    private FileWatcher<IFileInfo> _createFileWatcher(FileSource source)
+    private FileWatcher _createFileWatcher(FileSource source)
     {
         
-        return new FileWatcher<IFileInfo>(_fw, source.Location, async (items) =>
+        return new FileWatcher(_fw, source.Location, async items =>
         {
-            var dbUpdter = new FileDatabaseUpdater(_db, _tagLoader, _mimeDetector);
-            await dbUpdter.ProcessBatchAsync(source.Id, items);
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var dbUpdater = new FileDatabaseUpdater(db, _tagLoader, _mimeDetector);
+            await dbUpdater.ProcessBatchAsync(source.Id, items);
         }, _tagLoader.Supports);
     }
 
@@ -83,7 +96,8 @@ public class FileSourceWatcher
         IReadOnlyCollection<FileSource> deleted
         )> _compareSourcesAsync()
     {
-        var dbSources = _db.FileSources.AsNoTracking().ToList();
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var dbSources = db.FileSources.AsNoTracking().ToList();
         return await Task.FromResult(CompareLists(dbSources, _currentSources));
     }
 

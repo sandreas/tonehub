@@ -15,6 +15,7 @@ using tonehub.HostedServices.Scoped;
 using tonehub.Metadata;
 using tonehub.Options;
 using tonehub.Services;
+using tonehub.Services.FileIndexer;
 using tonehub.Settings;
 
 
@@ -128,6 +129,7 @@ try
 
     // background services, e.g. FileIndexer
     // builder.Services.AddHostedService<BackgroundFileIndexerService>();
+    builder.Services.AddScoped<FileSourceWatcher>();
     builder.Services.AddHostedService<ConsumeScopedFileIndexerServiceHostedService>();
     builder.Services.AddScoped<IScopedFileIndexerService, ScopedFileIndexerService>();
 

@@ -11,6 +11,7 @@ using tonehub.Extensions;
 using tonehub.Metadata;
 using tonehub.Mime;
 using File = tonehub.Database.Models.File;
+using ILogger = Serilog.ILogger;
 
 namespace tonehub.Services.FileIndexer;
 
@@ -34,27 +35,42 @@ public class FileDatabaseUpdater
         {
             return;
         }
-
-        var filesArray = files.ToArray();
-        var locationFileMapping =
-            new ConcurrentDictionary<string, IFileInfo>(
-                filesArray.ToDictionary(f => NormalizeLocationFromPath(source.Location, f), f => f));
-        var locations = locationFileMapping.Keys.ToArray();
-
-        var dbChangedFiles = _db
-            .Files
-            .Where(f => f.Source == source && locations.Contains(f.Location))
-            .Include(f => f.FileJsonValues)
-            .Include(f => f.FileTags)
-            .ThenInclude(ft => ft.Tag)
-            .AsSplitQuery();
         
-        var newFiles = FilterNewFiles(locations, dbChangedFiles, filesArray);
-        var dbNewFiles = CreateNewFileEntities(source, newFiles);
-        _db.UpdateRange(dbNewFiles);
-        _db.UpdateRange(dbChangedFiles);
+        try
+        {
+            
+            var filesArray = files.ToArray();
+            var locationFileMapping =
+                new ConcurrentDictionary<string, IFileInfo>(
+                    filesArray.ToDictionary(f => NormalizeLocationFromPath(source.Location, f), f => f));
+            var locations = locationFileMapping.Keys.ToArray();
+            var dbChangedFiles = _db
+                .Files
+                .Where(f => f.Source == source && locations.Contains(f.Location))
+                .Include(f => f.FileJsonValues)
+                .Include(f => f.FileTags)
+                .ThenInclude(ft => ft.Tag)
+                .AsSplitQuery();
+        
+            var newFiles = FilterNewFiles(locations, dbChangedFiles, filesArray);
+            var dbNewFiles = CreateNewFileEntities(source, newFiles);
+            
+            // for debugging
+            // var dbChangedFilesList = await dbChangedFiles.ToListAsync();
+            // var dbNewFilesList =  dbNewFiles.ToList();
 
-        await UpdateChangedFileEntities(dbChangedFiles, locationFileMapping);
+            _db.UpdateRange(dbNewFiles);
+            _db.UpdateRange(dbChangedFiles);
+            await UpdateChangedFileEntities(dbChangedFiles, locationFileMapping);
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception e)
+        {
+            // Console.WriteLine(e);
+            throw;
+        }
+
+
     }
 
     private IEnumerable<File> CreateNewFileEntities(FileSource fileSource, List<IFileInfo> newFiles)
@@ -64,6 +80,7 @@ public class FileDatabaseUpdater
 
     private File CreateNewFileEntity(FileSource source, IFileInfo file)
     {
+        _tagLoader.Initialize(file);
         var newFileRecord = new File
         {
             Source = source,
@@ -81,6 +98,7 @@ public class FileDatabaseUpdater
             var file = locationFileMapping[existingFileModel.Location];
             if (existingFileModel.ModifiedDate < file.LastWriteTime)
             {
+                _tagLoader.Initialize(file);
                 existingFileModel.HasChanged = true;
                 // if file has been modified, hash has to be recalculated, GlobalFilterType reset
                 // because file could have been replaced

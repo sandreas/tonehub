@@ -1,4 +1,5 @@
 using tonehub.HostedServices.Scoped;
+using tonehub.Services.FileIndexer;
 
 namespace tonehub.HostedServices;
 using ILogger = Serilog.ILogger;
@@ -28,8 +29,8 @@ public class ConsumeScopedFileIndexerServiceHostedService: BackgroundService
 
         using var scope = Services.CreateScope();
         var scopedProcessingService = 
-            scope.ServiceProvider.GetRequiredService<IScopedFileIndexerService>();
-        await scopedProcessingService.DoWork(stoppingToken);
+            scope.ServiceProvider.GetRequiredService<FileSourceWatcher>();
+        await scopedProcessingService.StartAsync(stoppingToken);
     }
     
     public override async Task StopAsync(CancellationToken stoppingToken)

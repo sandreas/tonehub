@@ -86,23 +86,23 @@ public class AppDbContext : DbContext
         
     
     }
-    
+    /*
     public override void Dispose()
     {
         
         var changedEntities = ChangeTracker.Entries().ToList();
         var count = changedEntities.Count();
-        /*foreach (var entityEntry in changedEntities)
-        {
-            entityEntry.State = EntityState.Detached;
-        }
-        */
+        //foreach (var entityEntry in changedEntities)
+        //{
+         //   entityEntry.State = EntityState.Detached;
+        //}
+        
         ChangeTracker.Clear();
         base.Dispose();
         GC.Collect();
 
 
-    }
+    }*/
     
     
 }
