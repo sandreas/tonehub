@@ -1,13 +1,10 @@
 using System.Collections.Concurrent;
 using System.IO.Abstractions;
 using System.Text;
-using JsonApiDotNetCore.Services;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
-using Newtonsoft.Json.Linq;
 using tonehub.Database;
 using tonehub.Database.Models;
-using tonehub.Extensions;
 using tonehub.Metadata;
 using tonehub.Mime;
 using File = tonehub.Database.Models.File;
@@ -17,26 +14,28 @@ namespace tonehub.Services.FileIndexer;
 
 public class FileDatabaseUpdater
 {
-    private readonly AppDbContext _db;
+    // private readonly AppDbContext _db;
     private readonly IFileLoader _tagLoader;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
     private readonly ILogger _logger;
+    private readonly IDbContextFactory<AppDbContext> _dbContextFactory;
 
-    public FileDatabaseUpdater(ILogger logger, AppDbContext db, IFileLoader tagLoader, FileExtensionContentTypeProvider mimeDetector)
+    public FileDatabaseUpdater(ILogger logger, IDbContextFactory<AppDbContext> dbContextFactory, IFileLoader tagLoader, FileExtensionContentTypeProvider mimeDetector)
     {
         _logger = logger;
-        _db = db;
+        _dbContextFactory = dbContextFactory;
         _tagLoader = tagLoader;
         _mimeDetector = mimeDetector;
     }
 
     public async Task ProcessBatchAsync<TId>(TId sourceId, IFileInfo[] filesArray)
     {
+        await using var db = await _dbContextFactory.CreateDbContextAsync();
         if(!filesArray.Any()){
             _logger.Information("ProcessBatchAsync - no files");
             return;
         }
-        var source = await _db.FileSources.FindAsync(sourceId);
+        var source = await db.FileSources.FindAsync(sourceId);
         if (source == null)
         {
             _logger.Information("ProcessBatchAsync - no source for id {SourceId}", sourceId);
@@ -52,7 +51,7 @@ public class FileDatabaseUpdater
                     filesArray.ToDictionary(f => NormalizeLocationFromPath(source.Location, f), f => f));
             var locations = locationFileMapping.Keys.ToArray();
             
-            var dbExistingFiles = _db
+            var dbExistingFiles = db
                 .Files
                 .Where(f => f.Source == source && locations.Contains(f.Location))
                 .Include(f => f.FileJsonValues)
@@ -72,19 +71,19 @@ public class FileDatabaseUpdater
             
             foreach(var f in dbNewFiles)
             {
-                await UpdateFileRecordTagsAndJsonValues(f);
+                await UpdateFileRecordTagsAndJsonValues(db, f);
             }
 
             _logger.Information("ProcessBatchAsync - existing files: {FileCount} files", dbExistingFiles.Count());
             
-            await UpdateChangedFileEntities(dbExistingFiles, locationFileMapping);
+            await UpdateChangedFileEntities(db, dbExistingFiles, locationFileMapping);
             
             if(dbNewFiles.Count > 0)
-                _db.UpdateRange(dbNewFiles);
+                db.UpdateRange(dbNewFiles);
 
-            _db.UpdateRange(dbExistingFiles);
+            db.UpdateRange(dbExistingFiles);
             
-            await _db.SaveChangesAsync();
+            await db.SaveChangesAsync();
         }
         catch (Exception e)
         {
@@ -113,7 +112,7 @@ public class FileDatabaseUpdater
         return UpdateFileEntity(newFileRecord, file, NormalizeLocationFromPath(source.Location, file), "");
     }
 
-    private async Task UpdateChangedFileEntities(IQueryable<File> dbChangedFiles,
+    private async Task UpdateChangedFileEntities(AppDbContext db, IQueryable<File> dbChangedFiles,
         ConcurrentDictionary<string, IFileInfo> locationFileMapping)
     {
         foreach (var existingFileModel in dbChangedFiles)
@@ -127,7 +126,7 @@ public class FileDatabaseUpdater
                 // because file could have been replaced
                 existingFileModel.GlobalFilterType = _tagLoader.LoadGlobalFilterType();
                 UpdateFileEntity(existingFileModel, file, existingFileModel.Location, "");
-                await UpdateFileRecordTagsAndJsonValues(existingFileModel);
+                await UpdateFileRecordTagsAndJsonValues(db, existingFileModel);
             }
             else
             {
@@ -136,7 +135,7 @@ public class FileDatabaseUpdater
         }
     }
 
-    private async Task UpdateFileRecordTagsAndJsonValues(File fileRecord)
+    private async Task UpdateFileRecordTagsAndJsonValues(AppDbContext db, File fileRecord)
     {
         var loadedRawTags = _tagLoader.LoadTags().Select(t =>
         {
@@ -146,10 +145,10 @@ public class FileDatabaseUpdater
 
         var tagValues = loadedRawTags.Select(t => t.Value).Distinct();
         
-        var trackedTags = _db.ChangeTracker.Entries<Tag>().Where(t => tagValues.Contains(t.Entity.Value))
+        var trackedTags = db.ChangeTracker.Entries<Tag>().Where(t => tagValues.Contains(t.Entity.Value))
             .Select(te => te.Entity);
         var untrackedTagValues = tagValues.Where(v => trackedTags.All(tt => tt.Value != v)).Distinct();
-        var untrackedTags = _db.Tags.Where(t => untrackedTagValues.Contains(t.Value));
+        var untrackedTags = db.Tags.Where(t => untrackedTagValues.Contains(t.Value));
         var newTagValues = untrackedTagValues.Where(utv => untrackedTags.All(ut => ut.Value != utv)).Distinct();
         var newTags = newTagValues.Select(v => new Tag
         {
@@ -203,11 +202,11 @@ public class FileDatabaseUpdater
         }
         
         // todo: maybe this must be done before the foreach loop
-        await _db.Tags.AddRangeAsync(newTags);
+        await db.Tags.AddRangeAsync(newTags);
         // await _db.SaveChangesAsync();
         
-        await _db.FileTags.AddRangeAsync(newFileTags);
-        await _db.SaveChangesAsync();
+        await db.FileTags.AddRangeAsync(newFileTags);
+        await db.SaveChangesAsync();
 
         // todo: xxx is this necessary
         // await fileRecord.FileTags.AddRangeAsync(newFileTags.ToAsyncEnumerable());

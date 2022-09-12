@@ -6,7 +6,7 @@ namespace tonehub.Services.FileIndexer;
 
 public class FileWatcher<TId>
 {
-    private const int BatchSize = 10;
+    private const int BatchSize = 20;
     private CancellationTokenSource _cts;
     private readonly FileWalker _fw;
     public readonly string Location;

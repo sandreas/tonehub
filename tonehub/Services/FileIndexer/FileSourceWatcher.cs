@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Sandreas.Files;
+using SerilogTimings.Extensions;
 using tonehub.Database;
 using tonehub.Database.Models;
 using tonehub.Metadata;
@@ -22,6 +23,7 @@ public class FileSourceWatcher
     private readonly FileExtensionContentTypeProvider _mimeDetector;
     //private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly AppDbContext _db;
+    private int processedFiles = 0;
 
     public FileSourceWatcher(ILogger logger, AppDbContext db/*, IDbContextFactory<AppDbContext> dbFactory*/, FileDatabaseUpdater databaseUpdater, FileWalker fw, AudioFileLoader tagLoader,  FileExtensionContentTypeProvider mimeDetector)
     {
@@ -46,8 +48,6 @@ public class FileSourceWatcher
         }
         stopWatch.Stop();
     }
-
-
 
     private async Task _updateFileWatchers(Stopwatch stopWatch)
     {
@@ -140,11 +140,15 @@ public class FileSourceWatcher
         var returnValue = false;
         foreach(var watcher in _fileWatchers)
         {
+             using var operationHandle = _logger.BeginOperation($"- processedFiles: {processedFiles} / handle next batch for {watcher.Location}");
+
             // todo: should BatchSize be defined in FileWatcher? Or rather in _databaseUpdater?
             // Note: Database is the limiting factor here
             var nextBatch = (await watcher.GetNextBatchAsync()).ToArray();
             returnValue |= nextBatch.Any();
             await _databaseUpdater.ProcessBatchAsync(watcher.SourceId, nextBatch);
+            processedFiles += nextBatch.Length;
+            operationHandle.Complete();
         }
         
         return returnValue;

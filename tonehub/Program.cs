@@ -100,6 +100,8 @@ try
             }
         }
     );
+    builder.Services.AddDbContextFactory<AppDbContext>();
+
     // Add services to the container.
     builder.Services.AddScoped<DatabaseSettingsService>();
     builder.Services.AddScoped<AudioFileLoader>();
@@ -136,19 +138,20 @@ try
     builder.Services.AddHostedService<ConsumeScopedFileIndexerServiceHostedService>();
 
     app = builder.Build();
-    /*
+    
     var contextFactory = app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>();
     await using (var db = await contextFactory.CreateDbContextAsync())
     {
         db.Database.Migrate();
     }
-*/
+
+    /*
     using (var serviceScope = app.Services.CreateScope())
     {
         var db = serviceScope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.Migrate();
     }
-
+*/
 
     /*
     await using (var db = await contextFactory.CreateDbContextAsync())
