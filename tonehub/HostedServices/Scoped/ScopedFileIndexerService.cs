@@ -18,7 +18,7 @@ internal interface IScopedFileIndexerService
 internal class ScopedFileIndexerService : IScopedFileIndexerService
 {
     private readonly ILogger _logger;
-    private readonly IDbContextFactory<AppDbContext> _dbFactory;
+    // private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private CancellationTokenSource _cts;
     private List<FileSource> _lastQueuedSources = new();
     private List<IFileSystemWatcher> _watchers = new();
@@ -27,15 +27,17 @@ internal class ScopedFileIndexerService : IScopedFileIndexerService
     private bool _processQueuesRunning;
     private readonly FileIndexerService _fileIndexer;
     private readonly FileSystem _fs;
+    private readonly AppDbContext _db;
 
-    public ScopedFileIndexerService(ILogger logger, IDbContextFactory<AppDbContext> dbFactory,
-        FileIndexerService fileIndexer, FileSystem fs)
+    public ScopedFileIndexerService(ILogger logger, AppDbContext db/*, IDbContextFactory<AppDbContext> dbFactory,
+        FileIndexerService fileIndexer*/, FileSystem fs)
     {
         _logger = logger;
-        _dbFactory = dbFactory;
-        _fileIndexer = fileIndexer;
+        // _dbFactory = dbFactory;
+        // _fileIndexer = fileIndexer;
         _fs = fs;
         _cts = new CancellationTokenSource();
+        _db = db;
     }
 
     public async Task DoWork(CancellationToken stoppingToken)
@@ -204,7 +206,8 @@ internal class ScopedFileIndexerService : IScopedFileIndexerService
 
     private List<FileSource> _loadFileSources()
     {
-        using var db = _dbFactory.CreateDbContext();
-        return db.FileSources.AsNoTracking().ToList();
+        // using var db = _dbFactory.CreateDbContext();
+        // return db.FileSources.AsNoTracking().ToList();
+        return _db.FileSources.AsNoTracking().ToList();
     }
 }

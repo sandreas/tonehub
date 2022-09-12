@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using System.IO.Abstractions;
+using System.Diagnostics;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Sandreas.Files;
@@ -14,34 +14,50 @@ namespace tonehub.Services.FileIndexer;
 public class FileSourceWatcher
 {
     private Collection<FileSource> _currentSources = new();
-    private readonly Collection<FileWatcher> _fileWatchers = new();
+    private readonly Collection<FileWatcher<Guid>> _fileWatchers = new();
     private readonly ILogger _logger;
-    private readonly IDbContextFactory<AppDbContext> _dbFactory;
+    private readonly FileDatabaseUpdater _databaseUpdater;
     private readonly FileWalker _fw;
     private readonly IFileLoader _tagLoader;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
+    //private readonly IDbContextFactory<AppDbContext> _dbFactory;
+    private readonly AppDbContext _db;
 
-    public FileSourceWatcher(ILogger logger, IDbContextFactory<AppDbContext> dbFactory, FileWalker fw, AudioFileLoader tagLoader,  FileExtensionContentTypeProvider mimeDetector)
+    public FileSourceWatcher(ILogger logger, AppDbContext db/*, IDbContextFactory<AppDbContext> dbFactory*/, FileDatabaseUpdater databaseUpdater, FileWalker fw, AudioFileLoader tagLoader,  FileExtensionContentTypeProvider mimeDetector)
     {
         _logger = logger;
-        _dbFactory = dbFactory;
+        _databaseUpdater = databaseUpdater;
         _fw = fw;
         _tagLoader = tagLoader;
         _mimeDetector = mimeDetector;
+        // _dbFactory = dbFactory;
+        _db = db;
     }
 
     public async Task StartAsync(CancellationToken stoppingToken)
     {
+        var stopWatch = new Stopwatch();
+        
         while (!stoppingToken.IsCancellationRequested)
         {
-            await _updateFileWatchers();
-            // await _processNextBatch();
-            await Task.Delay(30000, stoppingToken);
+            await _updateFileWatchers(stopWatch);
+            await _processNextBatches();
+            // await Task.Delay(1000, stoppingToken);
         }
+        stopWatch.Stop();
     }
 
-    private async Task _updateFileWatchers()
+
+
+    private async Task _updateFileWatchers(Stopwatch stopWatch)
     {
+        // refresh file watchers on first run and every x seconds
+        if(stopWatch.IsRunning && stopWatch.Elapsed < TimeSpan.FromSeconds(30))
+        {
+            return;
+        }
+        stopWatch.Restart();
+        
         var (all, inserted, updated, deleted) = await _compareSourcesAsync();
 
         var needsCancellation = updated.Concat(deleted).ToList();
@@ -64,29 +80,14 @@ public class FileSourceWatcher
         
         foreach (var fw in fileWatchersToInsert)
         {
-            
-            // todo:
-            // - start file watcher
-            // - fullIndexOnce
-            // - await ProcessNextBatch => only one db task at a time
-            
             await fw.StartAsync();
             _fileWatchers.Add(fw);
         }
-
-        // todo: 
-
     }
 
-    private FileWatcher _createFileWatcher(FileSource source)
+    private FileWatcher<Guid> _createFileWatcher(FileSource source)
     {
-        
-        return new FileWatcher(_fw, source.Location, async items =>
-        {
-            await using var db = await _dbFactory.CreateDbContextAsync();
-            var dbUpdater = new FileDatabaseUpdater(db, _tagLoader, _mimeDetector);
-            await dbUpdater.ProcessBatchAsync(source.Id, items);
-        }, _tagLoader.Supports);
+        return new FileWatcher<Guid>(_fw, source.Id, source.Location, _tagLoader.Supports);
     }
 
     private async Task<(
@@ -96,8 +97,9 @@ public class FileSourceWatcher
         IReadOnlyCollection<FileSource> deleted
         )> _compareSourcesAsync()
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var dbSources = db.FileSources.AsNoTracking().ToList();
+        //await using var db = await _dbFactory.CreateDbContextAsync();
+        //var dbSources = db.FileSources.AsNoTracking().ToList();
+        var dbSources = _db.FileSources.AsNoTracking().ToList();
         return await Task.FromResult(CompareLists(dbSources, _currentSources));
     }
 
@@ -131,5 +133,20 @@ public class FileSourceWatcher
         }
 
         return (newValues, added, changed, removed);
+    }
+    
+    private async Task<bool> _processNextBatches()
+    {
+        var returnValue = false;
+        foreach(var watcher in _fileWatchers)
+        {
+            // todo: should BatchSize be defined in FileWatcher? Or rather in _databaseUpdater?
+            // Note: Database is the limiting factor here
+            var nextBatch = (await watcher.GetNextBatchAsync()).ToArray();
+            returnValue |= nextBatch.Any();
+            await _databaseUpdater.ProcessBatchAsync(watcher.SourceId, nextBatch);
+        }
+        
+        return returnValue;
     }
 }

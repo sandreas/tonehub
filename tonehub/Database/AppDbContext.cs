@@ -6,7 +6,6 @@ namespace tonehub.Database;
 
 public class AppDbContext : DbContext
 {
-
     // disable non nullable warning (I did not find a way to overcome this build warning)
 #pragma warning disable 8618
 
@@ -23,25 +22,33 @@ public class AppDbContext : DbContext
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
-
     }
 #pragma warning restore 8618
-        
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<FileJsonValue, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<Setting, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<DataItem, JToken>(vsi => vsi.Value));
         modelBuilder.ApplyConfiguration(new JsonConvertibleConfiguration<SmartFileList, JToken>(vsi => vsi.Query));
-        
+
         // does not work with sqlite
         // modelBuilder.Entity<Setting>().Property(p => p.Disabled).HasDefaultValue(false);
-        
+
         base.OnModelCreating(modelBuilder);
     }
-        
-    public override int SaveChanges()
+
+    public  Task<int> SaveChangesAsync()
     {
+        return SaveChangesAsync(CancellationToken.None);
+    }
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        _updateDates();
+        return await base.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
+    private void _updateDates()     {
         var now = DateTimeOffset.UtcNow;
         var changedEntities = ChangeTracker.Entries().ToList();
         foreach (var changedEntity in changedEntities)
@@ -58,11 +65,13 @@ public class AppDbContext : DbContext
                         entity.UpdatedDate = now;
                         break;
                 }
-                
             }
-            
         }
-        
+    }
+    
+    public override int SaveChanges()
+    {
+        _updateDates();
         return base.SaveChanges();
         /*
         // this does not seem to help
@@ -75,16 +84,14 @@ public class AppDbContext : DbContext
         return result;
         */
     }
-    
+
     /*
     // https://stackoverflow.com/questions/30209528/memory-leak-when-using-entity-framework
     // does not work
     */
-    
-    public void Detach(object entity) 
+
+    public void Detach(object entity)
     {
-        
-    
     }
     /*
     public override void Dispose()
@@ -103,6 +110,4 @@ public class AppDbContext : DbContext
 
 
     }*/
-    
-    
 }

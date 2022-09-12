@@ -1,13 +1,10 @@
-using System.Collections.Concurrent;
 using System.IO.Abstractions;
 using System.Threading.Tasks.Dataflow;
 using Sandreas.Files;
-using tonehub.Metadata;
-using ILogger = Serilog.ILogger;
 
 namespace tonehub.Services.FileIndexer;
 
-public class FileWatcher
+public class FileWatcher<TId>
 {
     private const int BatchSize = 10;
     private CancellationTokenSource _cts;
@@ -18,12 +15,15 @@ public class FileWatcher
     private readonly BufferBlock<IFileInfo> _queue = new();
     private readonly Func<IEnumerable<IFileInfo>, Task> _processAction;
 
-    public FileWatcher(FileWalker fw, string location, Func<IEnumerable<IFileInfo>, Task> processAction, Func<IFileInfo, bool>  whereFilterFunc)
+    public TId? SourceId { get; set; } = default;
+    
+    // todo: replace params with: fs (for watchers), FileSource(id+location), IEnumerable<IFileInfo> allFiles (initialScan)
+    public FileWatcher(FileWalker fw, TId sourceId, string location, Func<IFileInfo, bool>  whereFilterFunc)
     {
         _cts = new CancellationTokenSource();
         _fw = fw;
+        SourceId = sourceId;
         Location = location;
-        _processAction = processAction;
         _whereFilterFunc = whereFilterFunc;
     }
 
@@ -31,7 +31,7 @@ public class FileWatcher
     {
         Task.Run(InitialFullScan, _cts.Token);
         // todo: await CreateFileWatcher()
-        await ConsumeFiles();
+        // await ConsumeFiles();
     }
     
     public void Cancel()
@@ -45,17 +45,18 @@ public class FileWatcher
         foreach (var file in files)
         {
             _queue.Post(file);
-            /*
-            while(_queue.Count >= BatchSize)
+            
+            // load x times batch size as buffer, then wait until GetNextBatch
+            while(_queue.Count >= BatchSize * 5)
             {
                 await Task.Delay(10);
             }
-            */
         }
         _queue.Complete();
         await Task.CompletedTask;
     }
 
+    /*
     private async Task ConsumeFiles()
     {
         while (await _queue.OutputAvailableAsync())
@@ -70,5 +71,15 @@ public class FileWatcher
                 await _processAction.Invoke(batch);
             }
         }
+    }
+*/
+    public async Task<IEnumerable<IFileInfo>> GetNextBatchAsync()
+    {
+        var batch = new List<IFileInfo>();
+        while (await _queue.OutputAvailableAsync() && _queue.TryReceive(out var item) && batch.Count < BatchSize)
+        {
+            batch.Add(item);
+        }
+        return batch;
     }
 }

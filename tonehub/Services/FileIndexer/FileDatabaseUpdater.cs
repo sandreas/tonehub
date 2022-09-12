@@ -20,54 +20,76 @@ public class FileDatabaseUpdater
     private readonly AppDbContext _db;
     private readonly IFileLoader _tagLoader;
     private readonly FileExtensionContentTypeProvider _mimeDetector;
+    private readonly ILogger _logger;
 
-    public FileDatabaseUpdater(AppDbContext db, IFileLoader tagLoader, FileExtensionContentTypeProvider mimeDetector)
+    public FileDatabaseUpdater(ILogger logger, AppDbContext db, IFileLoader tagLoader, FileExtensionContentTypeProvider mimeDetector)
     {
+        _logger = logger;
         _db = db;
         _tagLoader = tagLoader;
         _mimeDetector = mimeDetector;
     }
 
-    public async Task ProcessBatchAsync<TId>(TId sourceId, IEnumerable<IFileInfo> files)
+    public async Task ProcessBatchAsync<TId>(TId sourceId, IFileInfo[] filesArray)
     {
+        if(!filesArray.Any()){
+            _logger.Information("ProcessBatchAsync - no files");
+            return;
+        }
         var source = await _db.FileSources.FindAsync(sourceId);
         if (source == null)
         {
+            _logger.Information("ProcessBatchAsync - no source for id {SourceId}", sourceId);
             return;
         }
         
         try
         {
-            
-            var filesArray = files.ToArray();
+            _logger.Information("ProcessBatchAsync - saving batch with {FileCount} files", filesArray.Length);
+
             var locationFileMapping =
                 new ConcurrentDictionary<string, IFileInfo>(
                     filesArray.ToDictionary(f => NormalizeLocationFromPath(source.Location, f), f => f));
             var locations = locationFileMapping.Keys.ToArray();
-            var dbChangedFiles = _db
+            
+            var dbExistingFiles = _db
                 .Files
                 .Where(f => f.Source == source && locations.Contains(f.Location))
                 .Include(f => f.FileJsonValues)
                 .Include(f => f.FileTags)
                 .ThenInclude(ft => ft.Tag)
+                // .AsNoTrackingWithIdentityResolution()
                 .AsSplitQuery();
-        
-            var newFiles = FilterNewFiles(locations, dbChangedFiles, filesArray);
-            var dbNewFiles = CreateNewFileEntities(source, newFiles);
-            
-            // for debugging
-            // var dbChangedFilesList = await dbChangedFiles.ToListAsync();
-            // var dbNewFilesList =  dbNewFiles.ToList();
 
-            _db.UpdateRange(dbNewFiles);
-            _db.UpdateRange(dbChangedFiles);
-            await UpdateChangedFileEntities(dbChangedFiles, locationFileMapping);
+            // var list = await dbExistingFiles.ToListAsync();
+            
+            
+            
+            var newFiles = FilterNewFiles(locations, dbExistingFiles, filesArray);
+            _logger.Information("ProcessBatchAsync - new files: {FileCount} files", newFiles.Count);
+
+            var dbNewFiles = CreateNewFileEntities(source, newFiles).ToList();
+            
+            foreach(var f in dbNewFiles)
+            {
+                await UpdateFileRecordTagsAndJsonValues(f);
+            }
+
+            _logger.Information("ProcessBatchAsync - existing files: {FileCount} files", dbExistingFiles.Count());
+            
+            await UpdateChangedFileEntities(dbExistingFiles, locationFileMapping);
+            
+            if(dbNewFiles.Count > 0)
+                _db.UpdateRange(dbNewFiles);
+
+            _db.UpdateRange(dbExistingFiles);
+            
             await _db.SaveChangesAsync();
         }
         catch (Exception e)
         {
-            // Console.WriteLine(e);
-            throw;
+            _logger.Warning(e, "ProcessBatchAsync could not save update");
+
         }
 
 
@@ -87,6 +109,7 @@ public class FileDatabaseUpdater
             IsNew = true,
             GlobalFilterType = _tagLoader.LoadGlobalFilterType()
         };
+        
         return UpdateFileEntity(newFileRecord, file, NormalizeLocationFromPath(source.Location, file), "");
     }
 
@@ -121,20 +144,22 @@ public class FileDatabaseUpdater
             return t;
         }).ToList();
 
-        var tagValues = loadedRawTags.Select(t => t.Value);
+        var tagValues = loadedRawTags.Select(t => t.Value).Distinct();
+        
         var trackedTags = _db.ChangeTracker.Entries<Tag>().Where(t => tagValues.Contains(t.Entity.Value))
             .Select(te => te.Entity);
-        var untrackedTagValues = tagValues.Where(v => trackedTags.All(tt => tt.Value != v));
+        var untrackedTagValues = tagValues.Where(v => trackedTags.All(tt => tt.Value != v)).Distinct();
         var untrackedTags = _db.Tags.Where(t => untrackedTagValues.Contains(t.Value));
-        var newTagValues = untrackedTagValues.Where(utv => untrackedTags.All(ut => ut.Value != utv));
+        var newTagValues = untrackedTagValues.Where(utv => untrackedTags.All(ut => ut.Value != utv)).Distinct();
         var newTags = newTagValues.Select(v => new Tag
         {
             Value = v
         }).ToList();
 
-
+        var trackedUntracked = trackedTags.Concat(untrackedTags);
+        var trackedUntrackedNew = trackedUntracked.Concat(newTags).ToList();
         ConcurrentDictionary<string, Tag> fileTagReference =
-            new(trackedTags.Concat(untrackedTags).Concat(newTags).ToDictionary(t => t.Value, t => t));
+            new(trackedUntrackedNew.ToDictionary(t => t.Value, t => t));
 
         var newFileTags = new List<FileTag>();
         var keepFileTags = new List<FileTag>();
@@ -169,20 +194,28 @@ public class FileDatabaseUpdater
                 keepFileTags.Add(fileTag);
             }
         }
-        // todo: maybe this must be done before the foreach loop
-        await _db.Tags.AddRangeAsync(newTags);
-        await _db.FileTags.AddRangeAsync(newFileTags);
-        await fileRecord.FileTags.AddRangeAsync(newFileTags.ToAsyncEnumerable());
         
-        // keep custom tags, that are not automatically defined by tagloaders
         var fileTagsToRemove =
-            fileRecord.FileTags.Where(f => !keepFileTags.Contains(f) && f.Type < IFileLoader.CustomTagTypeStart);
+            fileRecord.FileTags.Where(f => !keepFileTags.Contains(f) && f.Type < IFileLoader.CustomTagTypeStart).ToList();
         foreach (var fileTagToRemove in fileTagsToRemove)
         {
             fileRecord.FileTags.Remove(fileTagToRemove);
         }
         
-        var loadedRawJsonValues = _tagLoader.LoadJsonValues();
+        // todo: maybe this must be done before the foreach loop
+        await _db.Tags.AddRangeAsync(newTags);
+        // await _db.SaveChangesAsync();
+        
+        await _db.FileTags.AddRangeAsync(newFileTags);
+        await _db.SaveChangesAsync();
+
+        // todo: xxx is this necessary
+        // await fileRecord.FileTags.AddRangeAsync(newFileTags.ToAsyncEnumerable());
+        
+        // keep custom tags, that are not automatically defined by tagloaders
+
+        /*
+        var loadedRawJsonValues = _tagLoader.LoadJsonValues().ToList();
         
         var keep = new List<FileJsonValue>();
         var add = new List<FileJsonValue>();
@@ -204,15 +237,17 @@ public class FileDatabaseUpdater
                 keep.Add(fileJsonValue);
             }
         }
-        await _db.FileJsonValues.AddRangeAsync(add);
-        await fileRecord.FileJsonValues.AddRangeAsync(add.ToAsyncEnumerable());
-
+        
         var fileJsonValuesToRemove =
             fileRecord.FileJsonValues.Where(f => !keep.Contains(f) && f.Type < IFileLoader.CustomTagTypeStart).ToList();
         foreach (var fileTagToRemove in fileJsonValuesToRemove)
         {
             fileRecord.FileJsonValues.Remove(fileTagToRemove);
         }
+        
+        await _db.FileJsonValues.AddRangeAsync(add);
+        await fileRecord.FileJsonValues.AddRangeAsync(add.ToAsyncEnumerable());
+        */
     }
     
     private static string ShortenOverlongTagValue(string tagValue)

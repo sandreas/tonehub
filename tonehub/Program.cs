@@ -62,7 +62,7 @@ try
     // https://docs.microsoft.com/de-de/aspnet/core/fundamentals/configuration/?view=aspnetcore-6.0
     // ToneHub__DatabaseUri
     builder.Services.Configure<ToneHubOptions>(builder.Configuration.GetSection("ToneHub"));
-    builder.Services.AddDbContextFactory<AppDbContext>((services, options) =>
+    builder.Services.AddDbContextPool<AppDbContext>((services, options) =>
         {
             var settings = services.GetRequiredService<IOptions<ToneHubOptions>>();
 
@@ -101,16 +101,16 @@ try
         }
     );
     // Add services to the container.
-    builder.Services.AddSingleton<DatabaseSettingsService>();
-    builder.Services.AddSingleton<FileSystem>();
-    builder.Services.AddSingleton<FileWalker>();
-    builder.Services.AddSingleton<AudioFileLoader>();
-    builder.Services.AddSingleton(_ => new FileIndexerSettings
+    builder.Services.AddScoped<DatabaseSettingsService>();
+    builder.Services.AddScoped<AudioFileLoader>();
+    builder.Services.AddScoped<FileSystem>();
+    builder.Services.AddScoped<FileWalker>();
+    builder.Services.AddScoped(_ => new FileIndexerSettings
     {
         DeleteOrphansAfter = TimeSpan.FromSeconds(86400)
     });
-    builder.Services.AddSingleton<FileIndexerService>();
-    builder.Services.AddSingleton(_ => new FileExtensionContentTypeProvider
+    // builder.Services.AddSingleton<FileIndexerService>();
+    builder.Services.AddScoped(_ => new FileExtensionContentTypeProvider
     {
         Mappings =
         {
@@ -130,15 +130,32 @@ try
     // background services, e.g. FileIndexer
     // builder.Services.AddHostedService<BackgroundFileIndexerService>();
     builder.Services.AddScoped<FileSourceWatcher>();
-    builder.Services.AddHostedService<ConsumeScopedFileIndexerServiceHostedService>();
+    builder.Services.AddScoped<FileDatabaseUpdater>();
+    builder.Services.AddScoped<IFileLoader, AudioFileLoader>();
     builder.Services.AddScoped<IScopedFileIndexerService, ScopedFileIndexerService>();
+    builder.Services.AddHostedService<ConsumeScopedFileIndexerServiceHostedService>();
 
     app = builder.Build();
+    /*
     var contextFactory = app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>();
     await using (var db = await contextFactory.CreateDbContextAsync())
     {
         db.Database.Migrate();
     }
+*/
+    using (var serviceScope = app.Services.CreateScope())
+    {
+        var db = serviceScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.Migrate();
+    }
+
+
+    /*
+    await using (var db = await contextFactory.CreateDbContextAsync())
+    {
+        db.Database.Migrate();
+    }
+    */
 
     // Write streamlined request completion events, instead of the more verbose ones from the framework.
     // To use the default framework request logging instead, remove this line and set the "Microsoft"

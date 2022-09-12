@@ -14,9 +14,9 @@ public class DatabaseSettingsService
         {"maxHashBytes", new JValue(5*1024*1024)},
     };
 
-    public DatabaseSettingsService(IDbContextFactory<AppDbContext> db)
+    public DatabaseSettingsService(AppDbContext db)
     {
-        _db = db.CreateDbContext();
+        _db = db;
     }
     
     public bool TryGet<T>(string key, out T? value)
